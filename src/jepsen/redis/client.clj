@@ -61,6 +61,10 @@
              (assoc ~op :type :fail, :error :noleader))
            (catch [:prefix :notleader] e#
              (assoc ~op :type :fail, :error :notleader))
+           (catch java.io.EOFException e#
+             (assoc ~op :type crash#, :error :eof))
+           (catch java.net.ConnectException e#
+             (assoc ~op :type :fail, :error :connection-refused))
            (catch java.net.SocketTimeoutException e#
              (assoc ~op :type crash#, :error :socket-timeout)))))
 

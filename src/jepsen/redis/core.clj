@@ -6,11 +6,11 @@
             [jepsen [cli :as cli]
                     [checker :as checker]
                     [generator :as gen]
-                    [nemesis :as nemesis]
                     [tests :as tests]]
             [jepsen.os.debian :as debian]
             [jepsen.redis [append :as append]
-                          [db     :as rdb]]))
+                          [db     :as rdb]
+                          [nemesis :as nemesis]]))
 
 (def workloads
   "A map of workload names to functions that can take opts and construct
@@ -21,70 +21,77 @@
   "The workload names we run for test-all by default."
   (keys workloads))
 
-(def nemesis-specs
-  "The types of failures our nemesis can perform."
-  #{})
-
-(defn default-nemesis?
-  "Is this nemesis option map, as produced by the CLI, the default?"
-  [nemesis-opts]
-  (= {} (dissoc nemesis-opts :interval)))
-
 (def standard-nemeses
-  "A set of prepackaged nemeses"
-  [; Nothing
-   {:interval         1}])
+  "Combinations of nemeses for tests"
+  [[]
+   [:pause :kill :partition :clock :member]])
+
+(def special-nemeses
+  "A map of special nemesis names to collections of faults"
+  {:none []
+   :all  [:pause :kill :partition :clock :member]})
+
+(defn parse-nemesis-spec
+  "Takes a comma-separated nemesis string and returns a collection of keyword
+  faults."
+  [spec]
+  (->> (str/split spec #",")
+       (map keyword)
+       (mapcat #(get special-nemeses % [%]))))
 
 (defn redis-test
   "Builds up a Redis test from CLI options."
   [opts]
-  (let [workload ((workloads (:workload opts)) opts)]
+  (let [workload ((workloads (:workload opts)) opts)
+        db        (rdb/redis-raft)
+        nemesis   (nemesis/package
+                    {:db      db
+                     :nodes   (:nodes opts)
+                     :faults  (set (:nemesis opts))
+                     :partition {:targets [:majority :majorities-ring]}
+                     :pause     {:targets [:one :majority]}
+                     :kill      {:targets [:one :majority :all]}
+                     :interval  (:nemesis-interval opts)})
+        _ (info (pr-str nemesis))
+        ]
     (merge tests/noop-test
            opts
            workload
            {:checker    (checker/compose
-                          {:perf        (checker/perf)
+                          {:perf        (checker/perf
+                                          {:nemeses (:perf nemesis)})
                            :clock       (checker/clock-plot)
                            :stats       (checker/stats)
                            :exceptions  (checker/unhandled-exceptions)
                            :workload    (:checker workload)})
-            :db         (rdb/redis-raft)
+            :db         db
             :generator  (->> (:generator workload)
                              (gen/stagger (/ (:rate opts)))
-                             (gen/nemesis nil)
+                             (gen/nemesis (:generator nemesis))
                              (gen/time-limit (:time-limit opts)))
             :name       (str "redis " (:version opts)
                              " (raft " (:raft-version opts) ") "
-                             (name (:workload opts)))
-            :nemesis    nemesis/noop
+                             (when (:follower-proxy opts)
+                               "proxy ")
+                             (name (:workload opts)) " "
+                             (str/join "," (map name (:nemesis opts))))
+            :nemesis    (:nemesis nemesis)
             :os         debian/os})))
-
-(defn parse-nemesis-spec
-  "Parses a comma-separated string of nemesis types, and turns it into an
-  option map like {:kill-alpha? true ...}"
-  [s]
-  (if (= s "none")
-    {}
-    (->> (str/split s #",")
-         (map (fn [o] [(keyword (str o "?")) true]))
-         (into {}))))
 
 (def cli-opts
   "Options for test runners."
   [[nil "--follower-proxy" "If true, proxy requests from followers to leader."
     :default false]
 
-    [nil  "--nemesis SPEC" "A comma-separated list of nemesis types"
-    :default {:interval 10}
+   [nil "--nemesis FAULTS" "A comma-separated list of nemesis faults to enable"
     :parse-fn parse-nemesis-spec
-    :assoc-fn (fn [m k v]
-                (update m :nemesis merge v))
-    :validate [(fn [parsed]
-                 (and (map? parsed)
-                      (every? nemesis-specs (keys parsed))))
-               (str "Should be a comma-separated list of failure types. A failure type "
-                    (.toLowerCase (cli/one-of nemesis-specs))
-                    ". Or, you can use 'none' to indicate no failures.")]]
+    :validate [(partial every? #{:pause :kill :partition :clock :member})
+               "Faults must be pause, kill, partition, clock, or member, or the special faults all or none."]]
+
+   [nil "--nemesis-interval SECONDS" "How long to wait between nemesis faults."
+    :default  10
+    :parse-fn read-string
+    :validate [#(and (number? %) (pos? %)) "must be a positive number"]]
 
    [nil "--raft-version VERSION" "What version of redis-raft should we test?"
     :default "1b3fbf6"]
@@ -92,7 +99,7 @@
    ["-r" "--rate HZ" "Approximate number of requests per second per thread"
     :default 10
     :parse-fn read-string
-    :validate [#(and (number? %) (pos? %)) "Must be a positive number"]]
+    :validate [#(and (number? %) (pos? %)) "must be a positive number"]]
 
    ["-v" "--version VERSION" "What version of Redis should we test?"
     :default "f88f866"]
@@ -105,9 +112,7 @@
   "Takes parsed CLI options and constructs a sequence of test options, by
   combining all workloads and nemeses."
   [opts]
-  (let [nemeses     (if-let [n (:nemesis opts)]
-                      (if (default-nemesis? n) standard-nemeses [n])
-                      standard-nemeses)
+  (let [nemeses     (if-let [n (:nemesis opts)]  [n] standard-nemeses)
         workloads   (if-let [w (:workload opts)] [w] standard-workloads)
         counts      (range (:test-count opts))]
     (->> (for [i counts, n nemeses, w workloads]

@@ -2,9 +2,11 @@
   "Tests for transactional list append."
   (:require [clojure.tools.logging :refer [info warn]]
             [clojure.pprint :refer [pprint]]
-            [jepsen [client :as client]
+            [jepsen [checker :as checker]
+                    [client :as client]
                     [generator :as gen]
                     [util :as util :refer [parse-long]]]
+            [jepsen.checker.timeline :as timeline]
             [jepsen.tests.cycle.append :as append]
             [jepsen.redis [client :as rc]]
             [taoensso.carmine :as car :refer [wcar]]))
@@ -43,5 +45,11 @@
 (defn workload
   "A list append workload."
   [opts]
-  (-> (append/test {})
-      (assoc :client (Client. nil))))
+  (-> (append/test {:key-count          3
+                    :min-txn-length     1
+                    :max-txn-length     4
+                    :max-writes-per-key 256})
+      (assoc :client (Client. nil))
+      (update :checker #(checker/compose {:workload %
+                                          :timeline (timeline/html)}))
+      ))
