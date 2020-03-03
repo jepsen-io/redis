@@ -53,6 +53,9 @@
                              (gen/stagger (/ (:rate opts)))
                              (gen/nemesis nil)
                              (gen/time-limit (:time-limit opts)))
+            :name       (str "redis " (:version opts)
+                             " (raft " (:raft-version opts) ") "
+                             (name (:workload opts)))
             :nemesis    nemesis/noop
             :os         debian/os})))
 
@@ -84,7 +87,7 @@
                     ". Or, you can use 'none' to indicate no failures.")]]
 
    [nil "--raft-version VERSION" "What version of redis-raft should we test?"
-    :default "master"]
+    :default "1b3fbf6"]
 
    ["-r" "--rate HZ" "Approximate number of requests per second per thread"
     :default 10
@@ -92,7 +95,7 @@
     :validate [#(and (number? %) (pos? %)) "Must be a positive number"]]
 
    ["-v" "--version VERSION" "What version of Redis should we test?"
-    :default "unstable"]
+    :default "f88f866"]
 
    ["-w" "--workload NAME" "What workload should we run?"
     :parse-fn keyword

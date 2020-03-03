@@ -207,4 +207,6 @@
 
     db/LogFiles
     (log-files [_ test node]
-      [log-file])))
+      [log-file
+       (str dir "/" db-file)
+       (str dir "/" raft-log-file)])))
