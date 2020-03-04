@@ -10,6 +10,10 @@
                             [combined :as nc]]
             [jepsen.redis [db :as db]]))
 
+(defn member-nemesis
+  "A nemesis for adding and removing nodes from the cluster."
+  [])
+
 (defn package
   "Takes CLI opts; constructs a nemesis and generators for Redis."
   [opts]

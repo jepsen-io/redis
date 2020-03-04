@@ -2,11 +2,13 @@
   "Database automation"
   (:require [clojure.java [io :as io]
                           [shell :as shell]]
+            [clojure [pprint :refer [pprint]]
+                     [string :as str]]
             [clojure.tools.logging :refer [info warn]]
             [jepsen [control :as c]
                     [core :as jepsen]
                     [db :as db]
-                    [util :as util]]
+                    [util :as util :refer [parse-long]]]
             [jepsen.control.util :as cu]
             [jepsen.os.debian :as debian]
             [slingshot.slingshot :refer [try+ throw+]]))
@@ -56,7 +58,13 @@
             (c/exec :git :clone repo-url dir)))
 
     (c/cd full-dir
-          (c/exec :git :checkout version))
+          (try+ (c/exec :git :checkout version)
+                (catch [:exit 1] e
+                  (if (re-find #"pathspec .+ did not match any file" (:err e))
+                    (do ; Ah, we're out of date
+                        (c/exec :git :fetch)
+                        (c/exec :git :checkout version))
+                    (throw+ e)))))
     full-dir))
 
 (def build-locks
@@ -127,14 +135,144 @@
     (c/exec :cp (str build-dir "/" f) (str dir "/"))))
 
 (defn cli!
-  "Runs a Redis CLI command"
+  "Runs a Redis CLI command. Includes a 1s timeout."
   [& args]
-  (c/su (apply c/exec (str dir "/" cli-binary) args)))
+  (c/su (apply c/exec :timeout "1s" (str dir "/" cli-binary) args)))
 
-(defn raft-info
-  "Returns the current cluster state."
+(defn raft-info-str
+  "Returns the current cluster state as a string."
   []
   (cli! :--raw "RAFT.INFO"))
+
+(defn parse-raft-info-node
+  "Parses a node string in a raft-info string, which is a list of k=v pairs."
+  [s]
+  (->> (str/split s #",")
+       (map (fn [part]
+              (let [[k v] (str/split part #"=")
+                    k (keyword k)]
+                [k (case k
+                     (:id :last_conn_secs :port :conn_errors :conn_oks)
+                     (parse-long v)
+                     v)])))
+       (into {})))
+
+(defn parse-raft-info-kv
+  "Parses a string key and value in a section of the raft info string into a
+  key path (for assoc-in) and value [ks v]."
+  [section k v]
+  (let [k (keyword k)]
+    (case section
+      :raft     (case k
+                  (:role :state) [[section k] (keyword v)]
+
+                  (:node_id :leader_id :current_term :num_nodes)
+                  [[section k] (parse-long v)]
+
+                  (if (re-find #"^node(\d+)$" (name k))
+                    ; This is a node1, node2, ... entry; file it in :nodes
+                    [[section :nodes k] (parse-raft-info-node v)]
+                    [[section k] v]))
+      :log      [[section k] (parse-long v)]
+      :snapshot [[section k] v]
+      :clients  (case k
+                  :clients_in_multi_state [[section k] (parse-long v)]
+                  [[section k] v])
+      [[section k] v])))
+
+(defn raft-info
+  "Current cluster state as a map."
+  []
+  (-> (raft-info-str)
+      str/split-lines
+      (->> (reduce (fn [[s section] line]
+                     (if (re-find #"^\s*$" line)
+                       ; Blank
+                       [s section]
+
+                       (if-let [m (re-find #"^# (.+)$" line)]
+                         ; New section
+                         (let [section (keyword (.toLowerCase (m 1)))]
+                           [s section])
+
+                         (if-let [[_ k v] (re-find #"^(.+?):(.+)$" line)]
+                           ; k:v pair
+                           (let [[ks v] (parse-raft-info-kv section k v)]
+                             [(assoc-in s ks v) section])
+
+                           ; Don't know
+                           (throw+ {:type :raft-info-parse-error
+                                    :line line})))))
+                   [{} nil]))
+       first
+       ; Drop node keys; they're not real
+       (update-in [:raft :nodes] vals)))
+
+(def node-ips
+  "Returns a map of node names to IP addresses. Memoized."
+  (memoize
+    (fn [test]
+      (c/on-nodes test (fn [test node]
+                         (-> (c/exec :getent :hosts node)
+                             (str/split #"\s+")
+                             first))))))
+
+(defn node-state
+  "This is a bit tricky. Redis-raft lets every node report its own node id, as
+  well as the ids and *IP addresses* of other nodes--but the node set doesn't
+  include the node you're currently talking to, so we have to combine info from
+  multiple parts of the raft-info response. In addition, we use node names,
+  rather than IPs, so we have to map those back and forth too.
+
+  At the end of all this, we return a collection of maps, each like
+
+  {:node \"n1\"
+   :id   123}
+
+  This is a best-effort function; when nodes are down we can't get information
+  from them. Results may be partial."
+  [test]
+  (let [ip->node (into {} (map (juxt val key) (node-ips test)))
+        states (c/on-nodes test
+                           (fn [test node]
+                             ; We take our local raft info, and massage it
+                             ; into a set of {:node n1, :id 123} maps,
+                             ; combining info about the local node and
+                             ; other nodes.
+                             (let [ri (raft-info)
+                                   r  (:raft ri)]
+                               ; Other nodes
+                               (->> (:nodes r)
+                                    (map (fn [n]
+                                           {:id   (:id n)
+                                            :node (ip->node (:addr n))}))
+                                    ; Local node
+                                    (cons {:id  (:node_id r)
+                                           :node node})))))]
+    ; Now we make these distinct by node.
+    (->> states
+         vals
+         (apply concat)
+         (map (juxt :node identity))
+         (into {})
+         vals)))
+
+(defn node-id
+  "Looks up the numeric ID of a node by name."
+  [node]
+  (throw+ {:type :todo}))
+
+(defn remove-node!
+  "Removes a node from the cluster by node name."
+  [node]
+  (cli! "RAFT.NODE" "REMOVE" (node-id node)))
+
+(defprotocol Membership
+  "Allows a database to support node introspection, growing, and shrinking, the
+  cluster."
+  (members  [db]      "The set of nodes currently in the cluster.")
+  (join!    [db node] "Add a node to the cluster.")
+  (leave!   [db node] "Removes a node from the cluster."))
 
 (defn redis-raft
   "Sets up a Redis-Raft based cluster. Tests should include a :version option,
@@ -173,7 +311,9 @@
                 ; Port is mandatory here
                 (cli! :raft.cluster :join (str (jepsen/primary test) ":6379"))))
 
-          ;(info :raft-info (raft-info))
+          (Thread/sleep 2000)
+          (info :raft-info (raft-info))
+          (info :node-state (with-out-str (pprint (node-state test))))
           )))
 
     (teardown! [this test node]
