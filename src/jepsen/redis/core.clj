@@ -48,9 +48,11 @@
                     {:db      db
                      :nodes   (:nodes opts)
                      :faults  (set (:nemesis opts))
-                     :partition {:targets [:majority :majorities-ring]}
-                     :pause     {:targets [:one :majority]}
-                     :kill      {:targets [:one :majority :all]}
+                     :partition {:targets [:primaries
+                                           :majority
+                                           :majorities-ring]}
+                     :pause     {:targets [:primaries :majority]}
+                     :kill      {:targets [:primaries :majority :all]}
                      :interval  (:nemesis-interval opts)})
         _ (info (pr-str nemesis))
         ]

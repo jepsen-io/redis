@@ -180,6 +180,16 @@
       (db/kill! this test node)
       (c/su (c/exec :rm :-rf dir)))
 
+    db/Primary
+    (setup-primary! [_ test node])
+
+    (primaries      [_ test]
+      (->> (c/on-nodes test
+                       (fn [test node]
+                         (re-find #"role:leader" (raft-info))))
+           (filter val)
+           (map key)))
+
     db/Process
     (start! [_ test node]
             (c/su
