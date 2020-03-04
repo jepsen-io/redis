@@ -53,18 +53,38 @@
   [op idempotent & body]
   `(let [crash# (if (~idempotent (:f ~op)) :fail :info)]
      (try+ ~@body
+           (catch [:prefix :err] e#
+             (condp re-find (.getMessage (:throwable ~'&throw-context))
+               ; These two would ordinarily be our fault, but are actually
+               ; caused by follower proxies mangling connection state.
+               #"ERR DISCARD without MULTI"
+               (assoc ~op :type crash#, :error :discard-without-multi)
+
+               #"ERR MULTI calls can not be nested"
+               (assoc ~op :type crash#, :error :nested-multi)
+
+               (throw+)))
            (catch [:prefix :moved] e#
              (assoc ~op :type :fail, :error :moved))
+
            (catch [:prefix :nocluster] e#
              (assoc ~op :type :fail, :error :nocluster))
+
            (catch [:prefix :noleader] e#
              (assoc ~op :type :fail, :error :noleader))
+
            (catch [:prefix :notleader] e#
              (assoc ~op :type :fail, :error :notleader))
+
+           (catch [:prefix :timeout] e#
+             (assoc ~op :type crash# :error :timeout))
+
            (catch java.io.EOFException e#
              (assoc ~op :type crash#, :error :eof))
+
            (catch java.net.ConnectException e#
              (assoc ~op :type :fail, :error :connection-refused))
+
            (catch java.net.SocketTimeoutException e#
              (assoc ~op :type crash#, :error :socket-timeout)))))
 

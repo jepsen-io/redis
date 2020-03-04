@@ -2,6 +2,7 @@
   "Tests for transactional list append."
   (:require [clojure.tools.logging :refer [info warn]]
             [clojure.pprint :refer [pprint]]
+            [elle.core :as elle]
             [jepsen [checker :as checker]
                     [client :as client]
                     [generator :as gen]
@@ -25,7 +26,11 @@
            (mapv (fn [[f k v]]
                    (case f
                      :r      (wcar conn (car/lrange k 0 -1))
-                     :append (wcar conn (car/rpush k (str v))))))
+                     :append (wcar conn (car/rpush k (str v))))
+                   ; We force a small delay to widen the concurrency window
+                   ; here. Shouldn't matter, but it does break follower
+                   ; proxies.
+                   (Thread/sleep 500)))
            ; In a transaction
            (rc/with-txn conn)
            ; And zip results back into the original txn
@@ -48,8 +53,10 @@
   (-> (append/test {:key-count          3
                     :min-txn-length     1
                     :max-txn-length     4
-                    :max-writes-per-key 256})
+                    :max-writes-per-key 256
+                    :anomalies          [:G2 :G1 :dirty-update]
+                    :additional-graphs  [elle/realtime-graph]})
       (assoc :client (Client. nil))
-      (update :checker #(checker/compose {:workload %
-                                          :timeline (timeline/html)}))
+;      (update :checker #(checker/compose {:workload %
+;                                          :timeline (timeline/html)}))
       ))

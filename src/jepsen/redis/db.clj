@@ -326,7 +326,7 @@
     (primaries      [_ test]
       (->> (c/on-nodes test
                        (fn [test node]
-                         (re-find #"role:leader" (raft-info))))
+                         (re-find #"role:leader" (raft-info-str))))
            (filter val)
            (map key)))
 
