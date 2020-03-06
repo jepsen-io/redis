@@ -211,6 +211,24 @@
        ; Drop node keys; they're not real
        (update-in [:raft :nodes] vals)))
 
+(defn await-node-removal
+  "Blocks until node id no longer appears in the local (presumably, leader)'s
+  node set."
+  [id]
+  (info "Awaiting removal of" id)
+  (let [r (try+ (raft-info)
+                (catch [:exit 1] e
+                  :retry)
+                (catch Throwable e
+                  (warn e "Crash fetching raft-info")
+                  :retry))]
+    (if (or (= :retry r)
+            (some #{id} (map :id (:nodes (:raft r)))))
+      (do (info "Waiting for removal of" id)
+          (Thread/sleep 1000)
+          (recur id))
+      :done)))
+
 (def node-ips
   "Returns a map of node names to IP addresses. Memoized."
   (memoize
@@ -421,15 +439,19 @@
                                         (str target ":6379"))))))
 
     (leave! [db test node]
-      (let [id (node-id test node)
-            res (on-some-primary db test
-                                 (fn leave [_ local]
-                                   (info local :removing node (str "(id: " id ")"))
-                                   (cli! "RAFT.NODE" "REMOVE" id)))]
-        (c/on-nodes test [node] (fn [test node]
-                                  (db/kill! db test node)
-                                  (wipe! db test node)))
-        res))
+      (let [id      (node-id test node)
+            removed (future
+                      (c/on-nodes test [node]
+                                  (fn [_ _]
+                                    (await-node-removal id)
+                                    (info :removed node (str "(id: " id))
+                                    (info "Killing and wiping" node)
+                                    (db/kill! db test node)
+                                    (wipe! db test node))))]
+        (on-some-primary db test
+                         (fn leave [_ local]
+                           (info local :removing node (str "(id: " id ")"))
+                           (cli! "RAFT.NODE" "REMOVE" id)))))
 
     Wipe
     (wipe! [db test node]

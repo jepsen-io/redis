@@ -29,7 +29,11 @@
     (teardown! [this test] this)
 
     n/Reflection
-    (fs [this] [:join :leave])))
+    (fs [this] [:join :leave :hold])))
+
+(def min-cluster-size
+  "How small can the cluster get?"
+  1)
 
 (defn join-leave-gen
   "Emits join and leave operations for a DB."
@@ -41,7 +45,7 @@
           {:type :info, :f :join, :value (rand-nth (vec addable))}
 
           ; We can remove someone
-          (< 1 (count members))
+          (< min-cluster-size (count members))
           {:type :info, :f :leave, :value (rand-nth (vec members))}
 
           ; Huh, no options at all.
