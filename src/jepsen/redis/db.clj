@@ -1,15 +1,18 @@
 (ns jepsen.redis.db
   "Database automation"
-  (:require [clojure.java [io :as io]
+  (:require [taoensso.carmine :as car :refer [wcar]]
+            [clojure.java [io :as io]
                           [shell :as shell]]
             [clojure [pprint :refer [pprint]]
                      [string :as str]]
             [clojure.tools.logging :refer [info warn]]
+            [dom-top.core :refer [with-retry]]
             [jepsen [control :as c]
                     [core :as jepsen]
                     [db :as db]
                     [util :as util :refer [parse-long]]]
             [jepsen.control.util :as cu]
+            [jepsen.redis [client :as rc]]
             [jepsen.os.debian :as debian]
             [slingshot.slingshot :refer [try+ throw+]]))
 
@@ -148,7 +151,7 @@
   "Parses a node string in a raft-info string, which is a list of k=v pairs."
   [s]
   (->> (str/split s #",")
-       (map (fn [part]
+       (map (fn parse [part]
               (let [[k v] (str/split part #"=")
                     k (keyword k)]
                 [k (case k
@@ -185,7 +188,7 @@
   []
   (-> (raft-info-str)
       str/split-lines
-      (->> (reduce (fn [[s section] line]
+      (->> (reduce (fn parse-line [[s section] line]
                      (if (re-find #"^\s*$" line)
                        ; Blank
                        [s section]
@@ -211,9 +214,16 @@
 (def node-ips
   "Returns a map of node names to IP addresses. Memoized."
   (memoize
-    (fn [test]
-      (c/on-nodes test (fn [test node]
-                         (-> (c/exec :getent :hosts node)
+    (fn node-ips- [test]
+      (c/on-nodes test (fn get-ip [test node]
+                         (-> (with-retry [tries 2]
+                               (c/exec :getent :hosts node)
+                               (catch clojure.lang.ExceptionInfo e
+                                 ; Sometimes this returns -1 exit status for
+                                 ; reasons I *truly* do not understand
+                                 (if (pos? tries)
+                                   (retry (dec tries))
+                                   (throw e))))
                              (str/split #"\s+")
                              first))))))
 
@@ -227,6 +237,7 @@
   At the end of all this, we return a collection of maps, each like
 
   {:node \"n1\"
+   :role :leader
    :id   123}
 
   This is a best-effort function; when nodes are down we can't get information
@@ -234,45 +245,80 @@
   [test]
   (let [ip->node (into {} (map (juxt val key) (node-ips test)))
         states (c/on-nodes test
-                           (fn [test node]
+                           (fn xform [test node]
                              ; We take our local raft info, and massage it
                              ; into a set of {:node n1, :id 123} maps,
                              ; combining info about the local node and
                              ; other nodes.
-                             (let [ri (raft-info)
-                                   r  (:raft ri)]
-                               ; Other nodes
-                               (->> (:nodes r)
-                                    (map (fn [n]
-                                           {:id   (:id n)
-                                            :node (ip->node (:addr n))}))
-                                    ; Local node
-                                    (cons {:id  (:node_id r)
-                                           :node node})))))]
-    ; Now we make these distinct by node.
+                             (try+ (let [ri (raft-info)
+                                         r  (:raft ri)]
+                                     ; Other nodes
+                                     (->> (:nodes r)
+                                          (map (fn xform-node [n]
+                                                 {:id   (:id n)
+                                                  :node (ip->node (:addr n))}))
+                                          ; Local node
+                                          (cons {:id  (:node_id r)
+                                                 :role (:role r)
+                                                 :node node})))
+                                   ; Couldn't run redis-cli
+                                   (catch [:exit 1]   e [])
+                                   (catch [:exit 124] e []))))]
+    ; Now we merge information from all nodes.
     (->> states
          vals
          (apply concat)
-         (map (juxt :node identity))
-         (into {})
-         vals)))
+         (group-by :node)
+         vals
+         (map (fn [views-of-node]
+                (apply merge views-of-node))))))
 
 (defn node-id
   "Looks up the numeric ID of a node by name."
-  [node]
-  (throw+ {:type :todo}))
-
-(defn remove-node!
-  "Removes a node from the cluster by node name."
-  [node]
-  (cli! "RAFT.NODE" "REMOVE" (node-id node)))
+  [test node]
+  (->> (node-state test)
+       (filter #(= node (:node %)))
+       first
+       :id))
 
 (defprotocol Membership
   "Allows a database to support node introspection, growing, and shrinking, the
   cluster."
-  (members  [db]      "The set of nodes currently in the cluster.")
-  (join!    [db node] "Add a node to the cluster.")
-  (leave!   [db node] "Removes a node from the cluster."))
+  (members  [db test]      "The set of nodes currently in the cluster.")
+  (join!    [db test node] "Add a node to the cluster.")
+  (leave!   [db test node] "Removes a node from the cluster."))
+
+(defprotocol Health
+  "Allows a database to signal when a node is alive."
+  (up? [db test node]))
+
+(defprotocol Wipe
+  "Lets you destroy a database's local state."
+  (wipe! [db test node]))
+
+(defn on-some-node
+  "Evaluates (f test node) on (randomly ordered) nodes in the test, moving on
+  to new nodes when it throws."
+  [test f]
+  (with-retry [nodes (shuffle (:nodes test))]
+    (when (seq nodes)
+      (c/on-nodes test (take 1 nodes) f))
+    (catch Exception e
+      (if-let [more (next nodes)]
+        (retry more)
+        (throw e)))))
+
+(defn on-some-primary
+  "Evaluates (f test node) on some (randomly ordered) primary node in the DB,
+  trying each primary in turn until no exception is thrown."
+  [db test f]
+  (with-retry [nodes (shuffle (db/primaries db test))]
+    (when (seq nodes)
+      (c/on-nodes test (take 1 nodes) f))
+    (catch Exception e
+      (if-let [more (next nodes)]
+        (retry more)
+        (throw e)))))
 
 (defn redis-raft
   "Sets up a Redis-Raft based cluster. Tests should include a :version option,
@@ -324,16 +370,14 @@
     (setup-primary! [_ test node])
 
     (primaries      [_ test]
-      (->> (c/on-nodes test
-                       (fn [test node]
-                         (re-find #"role:leader" (raft-info-str))))
-           (filter val)
-           (map key)))
+      (->> (node-state test)
+           (filter (comp #{:leader} :role))
+           (map :node)))
 
     db/Process
     (start! [_ test node]
             (c/su
-              (info :starting :redis)
+              (info node :starting :redis)
               (cu/start-daemon!
                 {:logfile log-file
                  :pidfile pid-file
@@ -354,6 +398,45 @@
     db/Pause
     (pause!  [_ test node] (c/su (cu/grepkill! :stop binary)))
     (resume! [_ test node] (c/su (cu/grepkill! :cont binary)))
+
+    Health
+    (up? [db test node]
+      (try (let [conn (rc/open node)]
+             (try (= "PONG" (wcar conn (car/ping)))
+                  (finally (rc/close! conn))))
+           (catch java.net.ConnectException e
+             false)))
+
+    Membership
+    (members  [db test]
+      (map :node (node-state test)))
+
+    (join! [db test node]
+      (let [target (rand-nth (filter (partial up? db test) (members db test)))]
+        (c/on-nodes test [node] (fn start+join [_ _]
+                                  (db/start! db test node)
+                                  (Thread/sleep 1000)
+                                  (info node :joining target)
+                                  (cli! :raft.cluster :join
+                                        (str target ":6379"))))))
+
+    (leave! [db test node]
+      (let [id (node-id test node)
+            res (on-some-primary db test
+                                 (fn leave [_ local]
+                                   (info local :removing node (str "(id: " id ")"))
+                                   (cli! "RAFT.NODE" "REMOVE" id)))]
+        (c/on-nodes test [node] (fn [test node]
+                                  (db/kill! db test node)
+                                  (wipe! db test node)))
+        res))
+
+    Wipe
+    (wipe! [db test node]
+           (info "Wiping node")
+           (c/su
+             (c/cd dir
+                   (c/exec :rm :-f db-file raft-log-file))))
 
     db/LogFiles
     (log-files [_ test node]

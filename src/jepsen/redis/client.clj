@@ -85,8 +85,21 @@
            (catch java.net.ConnectException e#
              (assoc ~op :type :fail, :error :connection-refused))
 
+           (catch java.net.SocketException e#
+             (assoc ~op :type crash#, :error [:socket (.getMessage e#)]))
+
            (catch java.net.SocketTimeoutException e#
              (assoc ~op :type crash#, :error :socket-timeout)))))
+
+(defmacro delay-exceptions
+  "Adds a short (n second) delay when an exception is thrown from body. Helpful
+  for not spamming the log with reconnection attempts to a down server, at the
+  cost of potentially missing the first moments of a server's life."
+  [n & body]
+  `(try ~@body
+       (catch Exception e#
+         (Thread/sleep (* ~n 1000))
+         (throw e#))))
 
 (defmacro with-txn
   "Runs in a multi ... exec scope. Discards body, returns the results of exec."

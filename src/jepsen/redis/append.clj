@@ -15,7 +15,8 @@
 (defrecord Client [conn]
   client/Client
   (open! [this test node]
-    (assoc this :conn (rc/open node)))
+    (rc/delay-exceptions 5
+      (assoc this :conn (rc/open node))))
 
   (setup! [_ test])
 
