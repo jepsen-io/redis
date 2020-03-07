@@ -11,7 +11,8 @@
                     [core :as jepsen]
                     [db :as db]
                     [util :as util :refer [parse-long]]]
-            [jepsen.control.util :as cu]
+            [jepsen.control [net :as cn]
+                            [util :as cu]]
             [jepsen.redis [client :as rc]]
             [jepsen.os.debian :as debian]
             [slingshot.slingshot :refer [try+ throw+]]))
@@ -215,7 +216,6 @@
   "Blocks until node id no longer appears in the local (presumably, leader)'s
   node set."
   [id]
-  (info "Awaiting removal of" id)
   (let [r (try+ (raft-info)
                 (catch [:exit 1] e
                   :retry)
@@ -223,27 +223,21 @@
                   (warn e "Crash fetching raft-info")
                   :retry))]
     (if (or (= :retry r)
+            (= id (:node_id (:raft r)))
             (some #{id} (map :id (:nodes (:raft r)))))
       (do (info "Waiting for removal of" id)
           (Thread/sleep 1000)
           (recur id))
-      :done)))
+      (do (info :done-waiting-for-node-removal (with-out-str (pprint r)))
+          :done))))
 
 (def node-ips
   "Returns a map of node names to IP addresses. Memoized."
   (memoize
     (fn node-ips- [test]
-      (c/on-nodes test (fn get-ip [test node]
-                         (-> (with-retry [tries 2]
-                               (c/exec :getent :hosts node)
-                               (catch clojure.lang.ExceptionInfo e
-                                 ; Sometimes this returns -1 exit status for
-                                 ; reasons I *truly* do not understand
-                                 (if (pos? tries)
-                                   (retry (dec tries))
-                                   (throw e))))
-                             (str/split #"\s+")
-                             first))))))
+      (->> (:nodes test)
+           (map (juxt identity cn/ip))
+           (into {})))))
 
 (defn node-state
   "This is a bit tricky. Redis-raft lets every node report its own node id, as
@@ -439,19 +433,30 @@
                                         (str target ":6379"))))))
 
     (leave! [db test node]
-      (let [id      (node-id test node)
-            removed (future
-                      (c/on-nodes test [node]
-                                  (fn [_ _]
-                                    (await-node-removal id)
-                                    (info :removed node (str "(id: " id))
-                                    (info "Killing and wiping" node)
-                                    (db/kill! db test node)
-                                    (wipe! db test node))))]
-        (on-some-primary db test
-                         (fn leave [_ local]
-                           (info local :removing node (str "(id: " id ")"))
-                           (cli! "RAFT.NODE" "REMOVE" id)))))
+      (let [id  (node-id test node)
+            removed (promise)
+            res (on-some-primary db test
+                                 (fn leave [_ local]
+                                   (info local :removing node
+                                         (str "(id: " id ")"))
+                                   (let [res (cli! "RAFT.NODE" "REMOVE" id)]
+                                     (when (= "OK" res)
+                                       ; Hang around to watch the leave process
+                                       (future
+                                         (await-node-removal id)
+                                         (info :removed node (str "(id: " id))
+                                         (deliver removed true)))
+                                     res)))]
+        ; Once we've removed, wipe the node.
+        (if (= "OK" res)
+          (future
+            (c/on-nodes test [node]
+                        (fn [_ _]
+                          @removed
+                          (info "Killing and wiping" node)
+                          (db/kill! db test node)
+                          (wipe! db test node)))))
+        (or res :no-primary-available)))
 
     Wipe
     (wipe! [db test node]
