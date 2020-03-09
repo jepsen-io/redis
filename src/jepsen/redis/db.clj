@@ -438,7 +438,6 @@
                              [(:remove node-or-map) (:using node-or-map)]
                              [node-or-map nil])
             id  (node-id test node)
-            removed (promise)
             leave! (fn leave! [test local]
                      (info local :removing node
                            (str "(id: " id ")"))
@@ -448,21 +447,19 @@
                          (future
                            (await-node-removal id)
                            (info local :removed node (str "(id: " id ")"))
-                           (deliver removed true)))
+                           ; Give em a bit to, you know, screw stuff up. Maybe
+                           ; answer some requests with stale data, or execute
+                           ; writes.
+                           (Thread/sleep 10000)
+                           (c/on-nodes test [node]
+                                       (fn [_ _]
+                                         (info "Killing and wiping" node)
+                                         (db/kill! db test node)
+                                         (wipe! db test node)))))
                        res))
             res (if primary
                   (c/on-nodes test [primary] leave!)
                   (on-some-primary db test leave!))]
-        ; Once we've removed, wipe the node. TODO: move this into the first
-        ; future.
-        (if (= "OK" res)
-          (future
-            @removed
-            (c/on-nodes test [node]
-                        (fn [_ _]
-                          (info "Killing and wiping" node)
-                          (db/kill! db test node)
-                          (wipe! db test node)))))
         (or res :no-primary-available)))
 
     Wipe
