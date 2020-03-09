@@ -159,7 +159,9 @@
                 (island-generator opts)
                 ; Other generators
                 (gen/mix [(island-generator opts)
-                          (:generator gen-package)])))
+                          (:generator gen-package)]))
+              ; Just use the regular faults
+              (:generator gen-package))
         ; Should do a final gen here too but I'm lazy and we don't use final
         ; gens yet.
         ]
