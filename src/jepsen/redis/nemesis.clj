@@ -79,30 +79,34 @@
   (let [db    (:db opts)
         queue (atom nil)] ; A queue of ops we're going to emit.
     (->> (reify gen/Generator
-           (op [_ test process]
-             (first
-               (swap! queue
-                      (fn [q]
-                        (if (seq q)
-                          ; Advance
-                          (next q)
-                          ; Empty, refill. We pick a primary and generate
-                          ; a queue of ops for it.
-                          (let [p (rand-nth (db/primaries db test))
-                                others (remove #{p} (:nodes test))]
-                            (info "New island target is" p)
-                            ; First, partition
-                            (concat
-                              [{:type  :info
-                                :f     :start-partition
-                                :value (n/complete-grudge [[p] others])}]
-                              ; Then, remove all other nodes
-                              (map (fn [n] {:type   :info
-                                            :f      :leave
-                                            :value  {:remove  n
-                                                     :using   p}})
-                                   others)))))))))
-         (gen/delay (:interval opts)))))
+           (op [this test process]
+             (or (first
+                   (swap! queue
+                          (fn [q]
+                            (if (seq q)
+                              ; Advance
+                              (next q)
+                              ; Empty, refill. We pick a primary and generate
+                              ; a queue of ops for it.
+                              (when-let [primaries (seq (db/primaries db test))]
+                                (let [p (rand-nth primaries)
+                                      others (remove #{p} (:nodes test))]
+                                  (info "New island target is" p)
+                                  ; First, partition
+                                  (concat
+                                    [{:type  :info
+                                      :f     :start-partition
+                                      :value (n/complete-grudge [[p] others])}]
+                                    ; Then, remove all other nodes
+                                    (map (fn [n] {:type   :info
+                                                  :f      :leave
+                                                  :value  {:remove  n
+                                                           :using   p}})
+                                         others))))))))
+                 ; Go again
+                 (Thread/sleep 1000)
+                 (recur test process))))
+           (gen/delay (:interval opts)))))
 
 (defn member-package
   "A membership generator and nemesis. Options:

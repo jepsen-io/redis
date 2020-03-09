@@ -447,15 +447,17 @@
                          (future
                            (await-node-removal id)
                            (info local :removed node (str "(id: " id ")"))
-                           ; Give em a bit to, you know, screw stuff up. Maybe
-                           ; answer some requests with stale data, or execute
-                           ; writes.
-                           (Thread/sleep 10000)
-                           (c/on-nodes test [node]
-                                       (fn [_ _]
-                                         (info "Killing and wiping" node)
-                                         (db/kill! db test node)
-                                         (wipe! db test node)))))
+                           (when (:nuke-after-leave test)
+                             ; Give em a bit to, you know, screw stuff up. Maybe
+                             ; answer some requests with stale data, or execute
+                             ; writes.
+                             (Thread/sleep 10000)
+                             (c/on-nodes test [node]
+                                         (fn [_ _]
+                                           (info "Killing and wiping" node)
+                                           (db/kill! db test node)
+                                           (wipe! db test node))))))
+
                        res))
             res (if primary
                   (c/on-nodes test [primary] leave!)
