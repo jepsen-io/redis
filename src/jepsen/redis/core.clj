@@ -21,15 +21,20 @@
   "The workload names we run for test-all by default."
   (keys workloads))
 
+(def nemeses
+  "Types of faults a nemesis can create."
+   #{:pause :kill :partition :clock :member :island})
+
 (def standard-nemeses
   "Combinations of nemeses for tests"
   [[]
-   [:pause :kill :partition :clock :member]])
+   [:pause :kill :partition :clock :member :island]])
 
 (def special-nemeses
   "A map of special nemesis names to collections of faults"
-  {:none []
-   :all  [:pause :kill :partition :clock :member]})
+  {:none      []
+   :standard  [:pause :kill :partition :clock :member]
+   :all       [:pause :kill :partition :clock :member :island]})
 
 (defn parse-nemesis-spec
   "Takes a comma-separated nemesis string and returns a collection of keyword
@@ -87,8 +92,9 @@
 
    [nil "--nemesis FAULTS" "A comma-separated list of nemesis faults to enable"
     :parse-fn parse-nemesis-spec
-    :validate [(partial every? #{:pause :kill :partition :clock :member})
-               "Faults must be pause, kill, partition, clock, or member, or the special faults all or none."]]
+    :validate [(partial every? (into nemeses (keys special-nemeses)))
+               (str "Faults must be one of " nemeses " or "
+                    (cli/one-of special-nemeses))]]
 
    [nil "--nemesis-interval SECONDS" "How long to wait between nemesis faults."
     :default  10

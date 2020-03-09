@@ -399,6 +399,7 @@
                 :--bind               "0.0.0.0"
                 :--dbfilename         db-file
                 :--loadmodule         (str dir "/redisraft.so")
+                "loglevel=debug"
                 (str "raft-log-filename=" raft-log-file)
                 (when (:follower-proxy test) (str "follower-proxy=yes"))
                 )))
@@ -432,27 +433,33 @@
                                   (cli! :raft.cluster :join
                                         (str target ":6379"))))))
 
-    (leave! [db test node]
-      (let [id  (node-id test node)
+    (leave! [db test node-or-map]
+      (let [[node primary] (if (map? node-or-map)
+                             [(:remove node-or-map) (:using node-or-map)]
+                             [node-or-map nil])
+            id  (node-id test node)
             removed (promise)
-            res (on-some-primary db test
-                                 (fn leave [_ local]
-                                   (info local :removing node
-                                         (str "(id: " id ")"))
-                                   (let [res (cli! "RAFT.NODE" "REMOVE" id)]
-                                     (when (= "OK" res)
-                                       ; Hang around to watch the leave process
-                                       (future
-                                         (await-node-removal id)
-                                         (info :removed node (str "(id: " id))
-                                         (deliver removed true)))
-                                     res)))]
-        ; Once we've removed, wipe the node.
+            leave! (fn leave! [test local]
+                     (info local :removing node
+                           (str "(id: " id ")"))
+                     (let [res (cli! "RAFT.NODE" "REMOVE" id)]
+                       (when (= "OK" res)
+                         ; Hang around to watch the leave process
+                         (future
+                           (await-node-removal id)
+                           (info local :removed node (str "(id: " id ")"))
+                           (deliver removed true)))
+                       res))
+            res (if primary
+                  (c/on-nodes test [primary] leave!)
+                  (on-some-primary db test leave!))]
+        ; Once we've removed, wipe the node. TODO: move this into the first
+        ; future.
         (if (= "OK" res)
           (future
+            @removed
             (c/on-nodes test [node]
                         (fn [_ _]
-                          @removed
                           (info "Killing and wiping" node)
                           (db/kill! db test node)
                           (wipe! db test node)))))
