@@ -76,9 +76,9 @@
 (defn workload
   "A list append workload."
   [opts]
-  (-> (append/test {:key-count          3
+  (-> (append/test {:key-count          (:key-count opts 3)
                     :min-txn-length     1
-                    :max-txn-length     4
+                    :max-txn-length     (:max-txn-length opts 4)
                     :max-writes-per-key 256
                     :anomalies          [:G2 :G1 :dirty-update]
                     :additional-graphs  [elle/realtime-graph]})

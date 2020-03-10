@@ -6,7 +6,8 @@
             [jepsen [cli :as cli]
                     [checker :as checker]
                     [generator :as gen]
-                    [tests :as tests]]
+                    [tests :as tests]
+                    [util :as util :refer [parse-long]]]
             [jepsen.os.debian :as debian]
             [jepsen.redis [append :as append]
                           [db     :as rdb]
@@ -89,6 +90,14 @@
   "Options for test runners."
   [[nil "--follower-proxy" "If true, proxy requests from followers to leader."
     :default false]
+
+   [nil "--key-count INT" "For the append test, how many keys should we test at once?"
+    :parse-fn parse-long
+    :validate [pos? "must be positive"]]
+
+   [nil "--max-txn-length INT" "What's the most operations we can execute per transaction?"
+    :parse-fn parse-long
+    :validate [pos? "must be positive"]]
 
    [nil "--nemesis FAULTS" "A comma-separated list of nemesis faults to enable"
     :parse-fn parse-nemesis-spec
