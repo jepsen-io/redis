@@ -10,7 +10,8 @@
             [jepsen.checker.timeline :as timeline]
             [jepsen.tests.cycle.append :as append]
             [jepsen.redis [client :as rc]]
-            [taoensso.carmine :as car :refer [wcar]]))
+            [taoensso.carmine :as car :refer [wcar]]
+            [slingshot.slingshot :refer [try+ throw+]]))
 
 (defn apply-mop!
   "Executes a micro-operation against a Carmine connection. This gets used in
@@ -25,9 +26,14 @@
 (defn parse-read
   "Turns reads of [:r :x ['1' '2'] into reads of [:r :x [1 2]]."
   [[f k v :as mop]]
-  (case f
-    :r [f k (mapv parse-long v)]
-    :append mop))
+  (try
+    (case f
+      :r [f k (mapv parse-long v)]
+      :append mop)
+    (catch ClassCastException e
+      (throw+ {:type  :unexpected-read-type
+               :key   k
+               :value v}))))
 
 (defrecord Client [conn]
   client/Client
@@ -40,6 +46,7 @@
   (invoke! [_ test op]
     (rc/with-exceptions op #{}
       (->> (if (< 1 (count (:value op)))
+             ; We need a transaction
              (->> (:value op)
                   ; Perform micro-ops for side effects
                   (mapv (partial apply-mop! conn))
@@ -55,6 +62,7 @@
              ; Just execute the mop directly, without a txn
              (->> (:value op)
                   (mapv (partial apply-mop! conn))))
+
            ; Parse integer reads
            (mapv parse-read)
            ; Returning that completed txn as an OK op

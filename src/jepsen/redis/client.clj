@@ -40,6 +40,8 @@
         seed-pool (conn/conn-pool :none)
         conn      (conn/get-conn seed-pool spec)]
     {:pool (SingleConnectionPool. conn)
+     ; See with-txn
+     :in-txn? (atom false)
      :spec spec}))
 
 (defn close!
@@ -101,12 +103,48 @@
          (Thread/sleep (* ~n 1000))
          (throw e#))))
 
+(defn abort-txn!
+  "Takes a connection and calls discard on it, resetting the in-txn state to
+  false. None of this is threadsafe; we can cheat because our conns are
+  bound to threads. We ignore discard-without-multi because we must, whenever a
+  MULTI throws, issue a discard just in case."
+  [conn]
+  (try+
+    ;(info :multi-discarding)
+    (wcar conn (car/discard))
+    ;(info :multi-discarded)
+    (catch [:prefix :err] e
+      ;(info :abort-caught (.getMessage (:throwable &throw-context)))
+      (condp re-find (.getMessage (:throwable &throw-context))
+        ; Don't care, we're being safe!
+        #"ERR DISCARD without MULTI" nil
+        ; Something else
+        (throw+))))
+  (reset! (:in-txn? conn) false)
+  conn)
+
+(defn start-txn!
+  "Takes a connection and begins a MULTI transaction, updating the connection's
+  transaction state. Forces the current txn to discard, if one exists."
+  [conn]
+  (if (compare-and-set! (:in-txn? conn) false true)
+    (do ;(info :multi-starting)
+        (wcar conn (car/multi))
+        ;(info :multi-started)
+        conn)
+    (do ;(info "Completing discard of previous (likely aborted) transaction before new one.")
+        (abort-txn! conn)
+        (recur conn))))
+
 (defmacro with-txn
   "Runs in a multi ... exec scope. Discards body, returns the results of exec."
   [conn & body]
-  `(do (wcar ~conn (car/multi))
-       (try ~@body
-            (wcar ~conn (car/exec))
-            (catch Throwable t#
-              (wcar ~conn (car/discard))
-              (throw t#)))))
+  `(try (start-txn! ~conn)
+        ~@body
+        (let [r# (wcar ~conn (car/exec))]
+          ;(info :multi-exec ~conn)
+          r#)
+        (catch Throwable t#
+          ; This might fail, but we try to be polite.
+          (abort-txn! ~conn)
+          (throw t#))))
