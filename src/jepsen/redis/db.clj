@@ -105,6 +105,7 @@
         (c/cd dir
           (c/exec :git :submodule :init)
           (c/exec :git :submodule :update)
+          (c/exec :make :cleanall)
           (c/exec :make :clean)
           (c/exec :make))
         dir))))
