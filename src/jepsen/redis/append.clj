@@ -25,48 +25,55 @@
 
 (defn parse-read
   "Turns reads of [:r :x ['1' '2'] into reads of [:r :x [1 2]]."
-  [[f k v :as mop]]
+  [conn [f k v :as mop]]
   (try
     (case f
       :r [f k (mapv parse-long v)]
       :append mop)
     (catch ClassCastException e
-      (throw+ {:type  :unexpected-read-type
-               :key   k
-               :value v}))))
+      (throw+ {:type        :unexpected-read-type
+               :key         k
+               :value       v}))))
+               ; We're getting QUEUED in response to non-MULTI operations; I'm
+               ; trying to figure out why, and to get debugging info, I'm gonna
+               ; log whatever happens from an EXEC here.
+               ;:exec-result (wcar conn (car/exec))}))))
 
 (defrecord Client [conn]
   client/Client
   (open! [this test node]
     (rc/delay-exceptions 5
-      (assoc this :conn (rc/open node))))
+                         (let [c (rc/open node)]
+                           (info :conn c)
+                           (assoc this :conn (rc/open node)))))
 
   (setup! [_ test])
 
   (invoke! [_ test op]
     (rc/with-exceptions op #{}
-      (->> (if (< 1 (count (:value op)))
-             ; We need a transaction
-             (->> (:value op)
-                  ; Perform micro-ops for side effects
-                  (mapv (partial apply-mop! conn))
-                  ; In a transaction
-                  (rc/with-txn conn)
-                  ; And zip results back into the original txn
-                  (mapv (fn [[f k v] r]
-                          [f k (case f
-                                 :r      r
-                                 :append v)])
-                        (:value op)))
+      (rc/with-conn conn
+        (->> (if (< 1 (count (:value op)))
+               ; We need a transaction
+               (->> (:value op)
+                    ; Perform micro-ops for side effects
+                    (mapv (partial apply-mop! conn))
+                    ; In a transaction
+                    (rc/with-txn conn)
+                    ; And zip results back into the original txn
+                    (mapv (fn [[f k v] r]
+                            [f k (case f
+                                   :r      r
+                                   :append v)])
+                          (:value op)))
 
-             ; Just execute the mop directly, without a txn
-             (->> (:value op)
-                  (mapv (partial apply-mop! conn))))
+               ; Just execute the mop directly, without a txn
+               (->> (:value op)
+                    (mapv (partial apply-mop! conn))))
 
-           ; Parse integer reads
-           (mapv parse-read)
-           ; Returning that completed txn as an OK op
-           (assoc op :type :ok, :value))))
+             ; Parse integer reads
+             (mapv (partial parse-read conn))
+             ; Returning that completed txn as an OK op
+             (assoc op :type :ok, :value)))))
 
   (teardown! [_ test])
 

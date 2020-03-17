@@ -29,7 +29,11 @@
 (def standard-nemeses
   "Combinations of nemeses for tests"
   [[]
-   [:pause :kill :partition :clock :member :island]])
+   [:pause]
+   [:kill]
+   [:partition]
+   [:island]
+   [:pause :kill :partition :clock :member]])
 
 (def special-nemeses
   "A map of special nemesis names to collections of faults"

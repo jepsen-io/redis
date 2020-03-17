@@ -104,23 +104,24 @@
          (throw e#))))
 
 (defn abort-txn!
-  "Takes a connection and calls discard on it, resetting the in-txn state to
-  false. None of this is threadsafe; we can cheat because our conns are
-  bound to threads. We ignore discard-without-multi because we must, whenever a
-  MULTI throws, issue a discard just in case."
+  "Takes a connection and, if in a transaction, calls discard on it, resetting
+  the in-txn state to false. None of this is threadsafe; we can cheat because
+  our conns are bound to threads. We ignore discard-without-multi because we
+  must, whenever a MULTI throws, issue a discard just in case."
   [conn]
-  (try+
-    ;(info :multi-discarding)
-    (wcar conn (car/discard))
-    ;(info :multi-discarded)
-    (catch [:prefix :err] e
-      ;(info :abort-caught (.getMessage (:throwable &throw-context)))
-      (condp re-find (.getMessage (:throwable &throw-context))
-        ; Don't care, we're being safe!
-        #"ERR DISCARD without MULTI" nil
-        ; Something else
-        (throw+))))
-  (reset! (:in-txn? conn) false)
+  (when @(:in-txn? conn)
+    (try+
+      (info :multi-discarding)
+      (wcar conn (car/discard))
+      (catch [:prefix :err] e
+        ;(info :abort-caught (.getMessage (:throwable &throw-context)))
+        (condp re-find (.getMessage (:throwable &throw-context))
+          ; Don't care, we're being safe!
+          #"ERR DISCARD without MULTI" nil
+          ; Something else
+          (throw+))))
+    (info :multi-discarded)
+    (reset! (:in-txn? conn) false))
   conn)
 
 (defn start-txn!
@@ -128,21 +129,30 @@
   transaction state. Forces the current txn to discard, if one exists."
   [conn]
   (if (compare-and-set! (:in-txn? conn) false true)
-    (do ;(info :multi-starting)
+    (do (info :multi-starting)
         (wcar conn (car/multi))
-        ;(info :multi-started)
+        (info :multi-started)
         conn)
     (do ;(info "Completing discard of previous (likely aborted) transaction before new one.")
         (abort-txn! conn)
         (recur conn))))
+
+(defmacro with-conn
+  "Call before *any* use of a connection. Ensures that the connection is not in
+  a transaction state before executing body. Not thread-safe, like everything
+  else here, but that's OK, cuz we're singlethreaded."
+  [conn & body]
+  `(do (abort-txn! ~conn)
+       ~@body))
 
 (defmacro with-txn
   "Runs in a multi ... exec scope. Discards body, returns the results of exec."
   [conn & body]
   `(try (start-txn! ~conn)
         ~@body
+        (info :multi-exec)
         (let [r# (wcar ~conn (car/exec))]
-          ;(info :multi-exec ~conn)
+          (info :multi-execed)
           r#)
         (catch Throwable t#
           ; This might fail, but we try to be polite.

@@ -105,8 +105,8 @@
         (c/cd dir
           (c/exec :git :submodule :init)
           (c/exec :git :submodule :update)
-          (c/exec :make :cleanall)
           (c/exec :make :clean)
+          ;(c/exec :make :cleanall) ; This is supposed to work but it crashes :(
           (c/exec :make))
         dir))))
 
@@ -337,143 +337,152 @@
   "Sets up a Redis-Raft based cluster. Tests should include a :version option,
   which will be the git SHA or tag to build."
   []
-  (reify db/DB
-    (setup! [this test node]
-      (c/su
-        ; This is a total hack, but since we're grabbing private repos via SSH,
-        ; we gotta prime SSH to know about github. Once this repo is public
-        ; this nonsense can go away. Definitely not secure, but are we REALLY
-        ; being MITMed right now?
-        ; (c/exec :ssh-keyscan :-t :rsa "github.com"
-        ;        :>> (c/lit "~/.ssh/known_hosts"))
+  (let [tcpdump (db/tcpdump {:ports [6379]
+                             ; HAAACK, this is hardcoded for my cluster control
+                             ; node
+                             :filter "host 192.168.122.1"})]
+    (reify db/DB
+      (setup! [this test node]
+        (db/setup! tcpdump test node)
+        (c/su
+          ; This is a total hack, but since we're grabbing private repos via SSH,
+          ; we gotta prime SSH to know about github. Once this repo is public
+          ; this nonsense can go away. Definitely not secure, but are we REALLY
+          ; being MITMed right now?
+          ; (c/exec :ssh-keyscan :-t :rsa "github.com"
+          ;        :>> (c/lit "~/.ssh/known_hosts"))
 
-        ; Build and install
-        (install-build-tools!)
-        (let [redis      (future (-> test (build-redis! node) deploy-redis!))
-              redis-raft (future (-> test (build-redis-raft! node)
-                                    deploy-redis-raft!))]
-          [@redis @redis-raft]
+          ; Build and install
+          (install-build-tools!)
+          (let [redis      (future (-> test (build-redis! node) deploy-redis!))
+                redis-raft (future (-> test (build-redis-raft! node)
+                                       deploy-redis-raft!))]
+            [@redis @redis-raft]
 
-          ; Start
-          (db/start! this test node)
-          (Thread/sleep 1000) ; TODO: block until port bound
+            ; Start
+            (db/start! this test node)
+            (Thread/sleep 1000) ; TODO: block until port bound
 
-          (if (= node (jepsen/primary test))
-            ; Initialize the cluster on the primary
-            (do (cli! :raft.cluster :init)
-                (info "Main init done, syncing")
-                (jepsen/synchronize test 600)) ; Compilation can be slow
-            ; And join on secondaries.
-            (do (info "Waiting for main init")
-                (jepsen/synchronize test 600) ; Ditto
-                (info "Joining")
-                ; Port is mandatory here
-                (cli! :raft.cluster :join (str (jepsen/primary test) ":6379"))))
+            (if (= node (jepsen/primary test))
+              ; Initialize the cluster on the primary
+              (do (cli! :raft.cluster :init)
+                  (info "Main init done, syncing")
+                  (jepsen/synchronize test 600)) ; Compilation can be slow
+              ; And join on secondaries.
+              (do (info "Waiting for main init")
+                  (jepsen/synchronize test 600) ; Ditto
+                  (info "Joining")
+                  ; Port is mandatory here
+                  (cli! :raft.cluster :join (str (jepsen/primary test) ":6379"))))
 
-          (Thread/sleep 2000)
-          (info :raft-info (raft-info))
-          (info :node-state (with-out-str (pprint (node-state test))))
-          )))
+            (Thread/sleep 2000)
+            (info :raft-info (raft-info))
+            (info :node-state (with-out-str (pprint (node-state test))))
+            )))
 
-    (teardown! [this test node]
-      (db/kill! this test node)
-      (c/su (c/exec :rm :-rf dir)))
+      (teardown! [this test node]
+        (db/kill! this test node)
+        (c/su (c/exec :rm :-rf dir))
+        (db/teardown! tcpdump test node))
 
-    db/Primary
-    (setup-primary! [_ test node])
+      db/Primary
+      (setup-primary! [_ test node])
 
-    (primaries      [_ test]
-      (->> (node-state test)
-           (filter (comp #{:leader} :role))
-           (map :node)))
+      (primaries      [_ test]
+        (->> (node-state test)
+             (filter (comp #{:leader} :role))
+             (map :node)))
 
-    db/Process
-    (start! [_ test node]
-            (c/su
-              (info node :starting :redis)
-              (cu/start-daemon!
-                {:logfile log-file
-                 :pidfile pid-file
-                 :chdir   dir}
-                binary
-                ; config-file
-                :--bind               "0.0.0.0"
-                :--dbfilename         db-file
-                :--loadmodule         (str dir "/redisraft.so")
-                "loglevel=debug"
-                (str "raft-log-filename=" raft-log-file)
-                (when (:follower-proxy test) (str "follower-proxy=yes"))
-                )))
+      db/Process
+      (start! [_ test node]
+        (c/su
+          (info node :starting :redis)
+          (cu/start-daemon!
+            {:logfile log-file
+             :pidfile pid-file
+             :chdir   dir}
+            binary
+            ; config-file
+            :--bind               "0.0.0.0"
+            :--dbfilename         db-file
+            :--loadmodule         (str dir "/redisraft.so")
+            "loglevel=debug"
+            (str "raft-log-filename=" raft-log-file)
+            (when (:follower-proxy test) (str "follower-proxy=yes"))
+            )))
 
-    (kill! [_ test node]
-      (c/su
-        (cu/stop-daemon! binary pid-file)))
+      (kill! [_ test node]
+        (c/su
+          (cu/stop-daemon! binary pid-file)))
 
-    db/Pause
-    (pause!  [_ test node] (c/su (cu/grepkill! :stop binary)))
-    (resume! [_ test node] (c/su (cu/grepkill! :cont binary)))
+      db/Pause
+      (pause!  [_ test node] (c/su (cu/grepkill! :stop binary)))
+      (resume! [_ test node] (c/su (cu/grepkill! :cont binary)))
 
-    Health
-    (up? [db test node]
-      (try (let [conn (rc/open node)]
-             (try (= "PONG" (wcar conn (car/ping)))
-                  (finally (rc/close! conn))))
-           (catch java.net.ConnectException e
-             false)))
+      Health
+      (up? [db test node]
+        (try (let [conn (rc/open node)]
+               (try (= "PONG" (wcar conn (car/ping)))
+                    (finally (rc/close! conn))))
+             (catch java.net.ConnectException e
+               false)))
 
-    Membership
-    (members  [db test]
-      (map :node (node-state test)))
+      Membership
+      (members  [db test]
+        (map :node (node-state test)))
 
-    (join! [db test node]
-      (let [target (rand-nth (filter (partial up? db test) (members db test)))]
-        (c/on-nodes test [node] (fn start+join [_ _]
-                                  (db/start! db test node)
-                                  (Thread/sleep 1000)
-                                  (info node :joining target)
-                                  (cli! :raft.cluster :join
-                                        (str target ":6379"))))))
+      (join! [db test node]
+        (if-let [up (seq (filter (partial up? db test) (members db test)))]
+          (let [target (rand-nth up)]
+            (c/on-nodes test [node] (fn start+join [_ _]
+                                      (db/start! db test node)
+                                      (Thread/sleep 1000)
+                                      (info node :joining target)
+                                      (cli! :raft.cluster :join
+                                            (str target ":6379")))))
+          (throw+ {:type :no-up-node-to-join-to})))
 
-    (leave! [db test node-or-map]
-      (let [[node primary] (if (map? node-or-map)
-                             [(:remove node-or-map) (:using node-or-map)]
-                             [node-or-map nil])
-            id  (node-id test node)
-            leave! (fn leave! [test local]
-                     (info local :removing node
-                           (str "(id: " id ")"))
-                     (let [res (cli! "RAFT.NODE" "REMOVE" id)]
-                       (when (= "OK" res)
-                         ; Hang around to watch the leave process
-                         (future
-                           (await-node-removal id)
-                           (info local :removed node (str "(id: " id ")"))
-                           (when (:nuke-after-leave test)
-                             ; Give em a bit to, you know, screw stuff up. Maybe
-                             ; answer some requests with stale data, or execute
-                             ; writes.
-                             (Thread/sleep 10000)
-                             (c/on-nodes test [node]
-                                         (fn [_ _]
-                                           (info "Killing and wiping" node)
-                                           (db/kill! db test node)
-                                           (wipe! db test node))))))
+      (leave! [db test node-or-map]
+        (let [[node primary] (if (map? node-or-map)
+                               [(:remove node-or-map) (:using node-or-map)]
+                               [node-or-map nil])
+              id  (node-id test node)
+              leave! (fn leave! [test local]
+                       (info local :removing node
+                             (str "(id: " id ")"))
+                       (let [res (cli! "RAFT.NODE" "REMOVE" id)]
+                         (when (= "OK" res)
+                           ; Hang around to watch the leave process
+                           (future
+                             (await-node-removal id)
+                             (info local :removed node (str "(id: " id ")"))
+                             (when (:nuke-after-leave test)
+                               ; Give em a bit to, you know, screw stuff up. Maybe
+                               ; answer some requests with stale data, or execute
+                               ; writes.
+                               (Thread/sleep 10000)
+                               (c/on-nodes test [node]
+                                           (fn [_ _]
+                                             (info "Killing and wiping" node)
+                                             (db/kill! db test node)
+                                             (wipe! db test node))))))
 
-                       res))
-            res (if primary
-                  (c/on-nodes test [primary] leave!)
-                  (on-some-primary db test leave!))]
-        (or res :no-primary-available)))
+                         res))
+              res (if primary
+                    (c/on-nodes test [primary] leave!)
+                    (on-some-primary db test leave!))]
+          (or res :no-primary-available)))
 
-    Wipe
-    (wipe! [db test node]
-           (info "Wiping node")
-           (c/su
-             (c/cd dir
-                   (c/exec :rm :-f db-file raft-log-file))))
+          Wipe
+          (wipe! [db test node]
+                 (info "Wiping node")
+                 (c/su
+                   (c/cd dir
+                         (c/exec :rm :-f db-file raft-log-file))))
 
-    db/LogFiles
-    (log-files [_ test node]
-      [log-file
-       (str dir "/" db-file)
-       (str dir "/" raft-log-file)])))
+          db/LogFiles
+          (log-files [_ test node]
+                     (concat [log-file
+                              (str dir "/" db-file)
+                              (str dir "/" raft-log-file)]
+                             (db/log-files tcpdump test node))))))
