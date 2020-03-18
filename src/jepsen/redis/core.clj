@@ -115,7 +115,7 @@
     :validate [#(and (number? %) (pos? %)) "must be a positive number"]]
 
    [nil "--nuke-after-leave" "If true, kills and wipes data files for nodes after they leave the cluster. Enabling this flag lets the test run for longer, but also prevents us from seeing misbehavior by nodes which SOME nodes think are removed, but which haven't yet figured it out themselves. We have this because Redis doesn't actually shut nodes down when they find out they're removed."
-    :default false]
+    :default true]
 
    [nil "--raft-version VERSION" "What version of redis-raft should we test?"
     :default "1b3fbf6"]

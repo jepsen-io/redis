@@ -500,14 +500,15 @@
                      :members m}))
 
           ; Good, let's go.
-          (c/on-nodes test [node] (fn start+join [_ _]
-                                    (db/start! db test node)
-                                    (Thread/sleep 1000)
-                                    (info node :joining target)
-                                    (cli! :raft.cluster :join
-                                          (str target ":6379"))))
-          ; And mark that the join completed.
-          (swap! meta-members assoc-in [node :state] :live)))
+          (let [res (c/on-nodes test [node] (fn start+join [_ _]
+                                              (db/start! db test node)
+                                              (Thread/sleep 1000)
+                                              (info node :joining target)
+                                              (cli! :raft.cluster :join
+                                                    (str target ":6379"))))]
+            ; And mark that the join completed.
+            (swap! meta-members assoc-in [node :state] :live)
+            res)))
 
       (leave! [db test node-or-map]
         (let [[node primary] (if (map? node-or-map)
