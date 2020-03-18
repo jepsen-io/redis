@@ -105,8 +105,8 @@
         (c/cd dir
           (c/exec :git :submodule :init)
           (c/exec :git :submodule :update)
-          (c/exec :make :clean)
-          ;(c/exec :make :cleanall) ; This is supposed to work but it crashes :(
+          ;(c/exec :make :clean)
+          (c/exec :make :cleanall) ; This is supposed to work but it crashes :(
           (c/exec :make))
         dir))))
 
