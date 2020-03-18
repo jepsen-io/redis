@@ -44,7 +44,7 @@
   (open! [this test node]
     (rc/delay-exceptions 5
                          (let [c (rc/open node)]
-                           (info :conn c)
+                           ; (info :conn c)
                            (assoc this :conn (rc/open node)))))
 
   (setup! [_ test])

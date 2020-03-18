@@ -23,7 +23,9 @@
     (setup! [this test] this)
 
     (invoke! [this test op]
-      (info "Current membership\n" (with-out-str (pprint (rdb/node-state test))))
+      (info "Current membership\n" (with-out-str
+                                 (pprint (rdb/get-meta-members (:db opts)))
+                                 (pprint (rdb/node-state test))))
       (assoc op :value
              (case (:f op)
                :hold   nil

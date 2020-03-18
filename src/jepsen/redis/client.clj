@@ -32,17 +32,21 @@
   (close [_] (conn/close-conn conn)))
 
 (defn open
-  "Opens a connection to a node. Our connections are Carmine IConnectionPools."
-  [node]
-  (let [spec {:host       node
-              :port       6379
-              :timeout-ms 10000}
-        seed-pool (conn/conn-pool :none)
-        conn      (conn/get-conn seed-pool spec)]
-    {:pool (SingleConnectionPool. conn)
-     ; See with-txn
-     :in-txn? (atom false)
-     :spec spec}))
+  "Opens a connection to a node. Our connections are Carmine IConnectionPools.
+  Options are merged into the conn pool spec."
+  ([node]
+   (open node {}))
+  ([node opts]
+   (let [spec (merge {:host       node
+                      :port       6379
+                      :timeout-ms 10000}
+                     opts)
+         seed-pool (conn/conn-pool :none)
+         conn      (conn/get-conn seed-pool spec)]
+     {:pool (SingleConnectionPool. conn)
+      ; See with-txn
+      :in-txn? (atom false)
+      :spec spec})))
 
 (defn close!
   "Closes a connection to a node."
@@ -111,7 +115,7 @@
   [conn]
   (when @(:in-txn? conn)
     (try+
-      (info :multi-discarding)
+      ;(info :multi-discarding)
       (wcar conn (car/discard))
       (catch [:prefix :err] e
         ;(info :abort-caught (.getMessage (:throwable &throw-context)))
@@ -120,7 +124,7 @@
           #"ERR DISCARD without MULTI" nil
           ; Something else
           (throw+))))
-    (info :multi-discarded)
+    ;(info :multi-discarded)
     (reset! (:in-txn? conn) false))
   conn)
 
@@ -129,9 +133,9 @@
   transaction state. Forces the current txn to discard, if one exists."
   [conn]
   (if (compare-and-set! (:in-txn? conn) false true)
-    (do (info :multi-starting)
+    (do ;(info :multi-starting)
         (wcar conn (car/multi))
-        (info :multi-started)
+        ;(info :multi-started)
         conn)
     (do ;(info "Completing discard of previous (likely aborted) transaction before new one.")
         (abort-txn! conn)
@@ -150,9 +154,9 @@
   [conn & body]
   `(try (start-txn! ~conn)
         ~@body
-        (info :multi-exec)
+        ;(info :multi-exec)
         (let [r# (wcar ~conn (car/exec))]
-          (info :multi-execed)
+          ;(info :multi-execed)
           r#)
         (catch Throwable t#
           ; This might fail, but we try to be polite.

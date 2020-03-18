@@ -216,7 +216,7 @@
 (defn await-node-removal
   "Blocks until node id no longer appears in the local (presumably, leader)'s
   node set."
-  [id]
+  [node id]
   (let [r (try+ (raft-info)
                 (catch [:exit 1] e
                   :retry)
@@ -226,10 +226,11 @@
     (if (or (= :retry r)
             (= id (:node_id (:raft r)))
             (some #{id} (map :id (:nodes (:raft r)))))
-      (do (info "Waiting for removal of" id)
+      (do (info :waiting-for-removal id)
           (Thread/sleep 1000)
-          (recur id))
-      (do (info :done-waiting-for-node-removal (with-out-str (pprint r)))
+          (recur node id))
+      (do ;(info :done-waiting-for-removal id
+                ;(with-out-str (pprint r)))
           :done))))
 
 (def node-ips
@@ -296,7 +297,8 @@
 
 (defprotocol Membership
   "Allows a database to support node introspection, growing, and shrinking, the
-  cluster."
+  cluster. What a mess."
+  (get-meta-members [db]       "Local DB membership state machine.")
   (members  [db test]      "The set of nodes currently in the cluster.")
   (join!    [db test node] "Add a node to the cluster.")
   (leave!   [db test node] "Removes a node from the cluster."))
@@ -340,7 +342,26 @@
   (let [tcpdump (db/tcpdump {:ports [6379]
                              ; HAAACK, this is hardcoded for my cluster control
                              ; node
-                             :filter "host 192.168.122.1"})]
+                             :filter "host 192.168.122.1"})
+       ; This atom helps us track which nodes have been removed from the
+       ; cluster, when we can delete their data, etc. It'll be lazily
+       ; initialized as a part of the setup process, and tracks a map of node
+       ; names to membership states. Each membership state is a map like
+       ;
+       ;  {:state   A keyword for the node state
+       ;   :remover A future which is waiting for the node to be removed}
+       ;
+       ; States are one of
+       ;
+       ;   :out       - Not in the cluster, data files removed.
+       ;   :joining   - We are about to, or are in the process of, joining.
+       ;   :live      - Could be in the cluster, at least ostensibly. We enter
+       ;                this state before init or join.
+       ;   :removing  - We are about to, or have requested, that this node be
+       ;                removed. A future will be waiting to clean up its data,
+       ;                but won't act until *after* the node is no longer
+       ;                present in the removing node's node map.
+       meta-members (atom {})]
     (reify db/DB
       (setup! [this test node]
         (db/setup! tcpdump test node)
@@ -366,6 +387,7 @@
             (if (= node (jepsen/primary test))
               ; Initialize the cluster on the primary
               (do (cli! :raft.cluster :init)
+                  (swap! meta-members assoc node {:state :live})
                   (info "Main init done, syncing")
                   (jepsen/synchronize test 600)) ; Compilation can be slow
               ; And join on secondaries.
@@ -373,14 +395,22 @@
                   (jepsen/synchronize test 600) ; Ditto
                   (info "Joining")
                   ; Port is mandatory here
+                  (swap! meta-members assoc node {:state :live})
                   (cli! :raft.cluster :join (str (jepsen/primary test) ":6379"))))
 
             (Thread/sleep 2000)
+            (info :meta-members meta-members)
             (info :raft-info (raft-info))
             (info :node-state (with-out-str (pprint (node-state test))))
             )))
 
       (teardown! [this test node]
+        ; Welp, time to nuke all our waiting membership threads.
+        (doseq [[node {:keys [remover]}] @meta-members]
+          (when remover
+            (info "Aborting remover thread for" node)
+            (future-cancel remover)))
+
         (db/kill! this test node)
         (c/su (c/exec :rm :-rf dir))
         (db/teardown! tcpdump test node))
@@ -421,53 +451,151 @@
 
       Health
       (up? [db test node]
-        (try (let [conn (rc/open node)]
+        (try (let [conn (rc/open node {:timeout-ms 1000})]
                (try (= "PONG" (wcar conn (car/ping)))
                     (finally (rc/close! conn))))
+             (catch java.net.SocketTimeoutException e
+               false) ; Probably?
              (catch java.net.ConnectException e
                false)))
 
       Membership
-      (members  [db test]
-        (map :node (node-state test)))
+      (get-meta-members [db] @meta-members)
+
+      (members [db test]
+        ; We take the self-reported node states...
+        (->> (node-state test)
+             (map :node)
+             ; But because redis nodes stay up and think they're candidates
+             ; after being removed, we explicitly filter out dead/removing
+             ; nodes. Note that we leave :removing nodes in here, because
+             ; we might have started their removal process, but don't actually
+             ; know they're removed--or even that they will be removed. The
+             ; remove call might have failed, so we might need to try it again.
+             (remove (->> @meta-members
+                          (filter (comp #{:dead} :state val))
+                          (map key)
+                          set))))
 
       (join! [db test node]
-        (if-let [up (seq (filter (partial up? db test) (members db test)))]
-          (let [target (rand-nth up)]
-            (c/on-nodes test [node] (fn start+join [_ _]
-                                      (db/start! db test node)
-                                      (Thread/sleep 1000)
-                                      (info node :joining target)
-                                      (cli! :raft.cluster :join
-                                            (str target ":6379")))))
-          (throw+ {:type :no-up-node-to-join-to})))
+        (let [up (filter (partial up? db test) (members db test))
+              _  (when (empty? up)
+                   ; We can't actually join to anyone right now. This isn't
+                   ; bulletproof, but it really cuts down on the number of
+                   ; crashes.
+                   (throw+ {:type :no-up-node-to-join-to
+                            :node node}))
+              target (rand-nth up)
+              ; OK, we've got a node to join to. Can we join?
+              m (swap! meta-members update-in [node :state]
+                       {:dead     :joining      ; We can join a dead node
+                        :joining  :joining      ; We can try to join again
+                        :live     :live         ; But we can't join a live node
+                        :removing :removing})]  ; Or one being removed
+
+          ; Are we joining? If not, abort here.
+          (when-not (= :joining (get-in m [node :state]))
+            (throw+ {:type    :can't-join-in-this-state
+                     :node    node
+                     :members m}))
+
+          ; Good, let's go.
+          (c/on-nodes test [node] (fn start+join [_ _]
+                                    (db/start! db test node)
+                                    (Thread/sleep 1000)
+                                    (info node :joining target)
+                                    (cli! :raft.cluster :join
+                                          (str target ":6379"))))
+          ; And mark that the join completed.
+          (swap! meta-members assoc-in [node :state] :live)))
 
       (leave! [db test node-or-map]
         (let [[node primary] (if (map? node-or-map)
                                [(:remove node-or-map) (:using node-or-map)]
                                [node-or-map nil])
               id  (node-id test node)
-              leave! (fn leave! [test local]
-                       (info local :removing node
-                             (str "(id: " id ")"))
-                       (let [res (cli! "RAFT.NODE" "REMOVE" id)]
-                         (when (= "OK" res)
-                           ; Hang around to watch the leave process
-                           (future
-                             (await-node-removal id)
-                             (info local :removed node (str "(id: " id ")"))
-                             (when (:nuke-after-leave test)
-                               ; Give em a bit to, you know, screw stuff up. Maybe
-                               ; answer some requests with stale data, or execute
-                               ; writes.
-                               (Thread/sleep 10000)
-                               (c/on-nodes test [node]
-                                           (fn [_ _]
-                                             (info "Killing and wiping" node)
-                                             (db/kill! db test node)
-                                             (wipe! db test node))))))
+              ; Spawns a future which waits for the node to actually finish
+              ; being removed, optionally nukes the data, and transitions the
+              ; member to the :dead state.
+              remover (fn [local]
+                        (future
+                          (await-node-removal node id)
+                          (info local :removed node (str "(id: " id ")"))
+                          (when (:nuke-after-leave test)
+                            ; Give em a bit to, you know, screw stuff up. Maybe
+                            ; answer some requests with stale data, or execute
+                            ; writes.
+                            (Thread/sleep 10000)
+                            (c/on-nodes test [node]
+                                        (fn [_ _]
+                                          (info "Killing and wiping" node)
+                                          (db/kill! db test node)
+                                          (wipe! db test node))))
+                          ; Update members to clean up this future and mark us
+                          ; as dead.
+                          (swap! meta-members (fn [m]
+                                           (-> m
+                                               (update node dissoc :remover)
+                                               (update node assoc :state :dead))))))
+              ; Evaluated on a primary, puts us into the leaving state, spawns
+              ; the future to complete the remove process, and asks the node to
+              ; be removed.
+              leave!
+              (fn leave! [test local]
+                (info local :removing node
+                      (str "(id: " id ")"))
+                ; First up, update our state. We can only remove if
+                ; we're alive or already removing.
+                (let [m (swap! meta-members update-in [node :state]
+                               {:dead      :dead
+                                :joining   :joining
+                                :live      :removing
+                                :removing  :removing})]
 
-                         res))
+                  ; Make sure we're able to remove
+                  (when-not (= :removing (get-in m [node :state]))
+                    (throw+ {:type  :can't-remove-in-this-state
+                             :node  node
+                             :members m}))
+
+                  ; OK, this is a mess. Our call to REMOVE the node might
+                  ; fail--and if it does, we don't necessarily know whether the
+                  ; node is going to be removed or not. If we spawn this
+                  ; cleanup future before calling, then we might wind up nuking
+                  ; a node which is still supposed to be in the cluster--maybe,
+                  ; for instance, it's joining and this primary doesn't know
+                  ; about it yet. On the flip side, if we spawn the cleanup
+                  ; future after calling REMOVE, we might fail to kill and wipe
+                  ; a node which actually WILL be removed later, and get the
+                  ; node stuck in the :removing state indefinitely. I think
+                  ; that's safer, so that's what we're doing, but ugh... this
+                  ; whole thing is a fragile mess.
+
+                  ; OK, ask to remove the node. This should yield "OK".
+                  ;
+                  ; One of (many) weird things that could happen here: the node
+                  ; we're removing could still be joining, and unknown to this
+                  ; primary, but we have it in the :live state because we
+                  ; successfully completed the join call. This call will fail,
+                  ; and we'll be left with a "live" node in the :removing
+                  ; state. This is OK, because :removing doesn't... ACTUALLY
+                  ; mean removing--we actually WANT to come back and try to
+                  ; remove it again later.
+                  ;
+                  ; Sigh.
+                  (let [res (cli! "RAFT.NODE" "REMOVE" id)]
+                    ; (info local :remove node id :returned res)
+                    (when (= "OK" res)
+                      ; OK, we're gonna remove... eventually. Start the cleanup
+                      ; future.
+                      (locking meta-members
+                        (when-not (get-in @meta-members [node :remover])
+                          (swap! meta-members assoc-in [node :remover]
+                                 (remover local)))))
+                    res)))
+
+              ; Depending on whether we were asked to remove on a specific node
+              ; or not, go ahead and try to leave.
               res (if primary
                     (c/on-nodes test [primary] leave!)
                     (on-some-primary db test leave!))]
