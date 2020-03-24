@@ -83,10 +83,13 @@
 (defn workload
   "A list append workload."
   [opts]
-  (-> (append/test {:key-count          (:key-count opts 3)
+  (-> (append/test {; Exponentially distributed, so half of the time it's gonna
+                    ; be one key, 3/4 of ops will use one of 2 keys, 7/8 one of
+                    ; 3 keys, etc.
+                    :key-count          (:key-count opts 12)
                     :min-txn-length     1
                     :max-txn-length     (:max-txn-length opts 4)
-                    :max-writes-per-key (:max-writes-per-key opts 256)
+                    :max-writes-per-key (:max-writes-per-key opts 128)
                     :consistency-models [:strict-serializable]})
       (assoc :client (Client. nil))
 ;      (update :checker #(checker/compose {:workload %
