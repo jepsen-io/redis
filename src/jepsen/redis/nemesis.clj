@@ -110,6 +110,60 @@
                  (recur test process))))
            (gen/delay (:interval opts)))))
 
+(defn random-sublist
+  "Randomly drops elements from the given collection."
+  [coll]
+  (filter (fn [_] (< 0.1 (rand))) coll))
+
+(defn mystery-generator
+  "A generator for reproducing a weird fault we don't understand yet, involving
+  crashes and membership changes."
+  [opts]
+  ; We know this is sufficient, but it's really slow to repro
+  (let [db (:db opts)]
+    (->> [:kill   :all
+          :start  :all
+          :leave  "n3"
+          :kill   ["n3" "n4" "n5"]
+          :start  :all
+          :leave  "n1"
+          :kill   :primaries
+          :start  :all
+          :kill   ["n2" "n3" "n5"]
+          :start  :all
+          ; :kill   ["n1" "n2" "n5"]
+          :leave  "n5"
+          :start  :all
+          :leave  "n2"
+          :join   "n3"
+          :join   "n1"
+          :kill   :all
+          :start  :all]
+         (partition 2)
+         random-sublist
+         (map (fn [[f v]] {:type :info, :f f, :value v}))
+         gen/seq
+         (gen/delay (:interval opts))))
+  (->> [:leave "n1"
+        :leave "n2"
+        :leave "n3"
+        :leave "n4"
+        :leave "n5"
+        :kill  :all
+        :start :all
+        :join "n1"
+        :join "n2"
+        :join "n3"
+        :join "n4"
+        :join "n5"
+        :kill :all
+        :start :all]
+       (partition 2)
+       cycle
+       (map (fn [[f v]] {:type :info, :f f, :value v}))
+       gen/seq
+       (gen/delay (:interval opts))))
+
 (defn member-package
   "A membership generator and nemesis. Options:
 
@@ -145,25 +199,31 @@
                 faults."
   [opts]
   (info opts)
-  ; An island fault requires both membership and partition packages.
-  (let [nemesis-opts (if (some #{:island} (:faults opts))
-               (update opts :faults conj :member :partition)
-               opts)
+  ; An island fault requires both membership and partition packages, and
+  ; mystery faults need members and kills...
+  (let [nemesis-opts (cond (some #{:island} (:faults opts))
+                           (update opts :faults conj :member :partition)
+
+                           (some #{:mystery} (:faults opts))
+                           (update opts :faults conj :member :kill)
+
+                           true opts)
         ; Build a package for the options we have
         nemesis-package   (package-for nemesis-opts)
         ; And also for the generator faults we were explicitly asked for
         gen-package       (package-for opts)
-        ; If we're asked for islanding faults, we need a special generator for
-        ; those
-        gen (if (some #{:island} (:faults opts))
-              (if (= #{:island} (set (:faults opts)))
-                ; No other generators, it's just us. God this is such a hack.
-                (island-generator opts)
-                ; Other generators
-                (gen/mix [(island-generator opts)
-                          (:generator gen-package)]))
-              ; Just use the regular faults
-              (:generator gen-package))
+        ; If we're asked for islanding/mystery faults, we need a special
+        ; generator for those
+        faults (set (:faults opts))
+        ; Ugh this is a HAAACK, we can't mix island/mystery faults with others
+        _   (assert (or (and (some #{:island :mystery} faults)
+                             (= 1 (count faults)))
+                        (not-any? #{:island :mystery} faults))
+                    "Can't mix island or mystery faults with other types")
+        gen (case faults
+              #{:island}  (island-generator opts)
+              #{:mystery} (mystery-generator opts)
+                          (:generator gen-package))
         ; Should do a final gen here too but I'm lazy and we don't use final
         ; gens yet.
         ]

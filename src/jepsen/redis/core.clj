@@ -24,7 +24,7 @@
 
 (def nemeses
   "Types of faults a nemesis can create."
-   #{:pause :kill :partition :clock :member :island})
+   #{:pause :kill :partition :clock :member :island :mystery})
 
 (def standard-nemeses
   "Combinations of nemeses for tests"
@@ -33,13 +33,14 @@
    [:kill]
    [:partition]
    [:island]
+   [:mystery]
    [:pause :kill :partition :clock :member]])
 
 (def special-nemeses
   "A map of special nemesis names to collections of faults"
   {:none      []
    :standard  [:pause :kill :partition :clock :member]
-   :all       [:pause :kill :partition :clock :member :island]})
+   :all       [:pause :kill :partition :clock :member :island :mystery]})
 
 (defn parse-nemesis-spec
   "Takes a comma-separated nemesis string and returns a collection of keyword
@@ -152,5 +153,7 @@
   [& args]
   (cli/run! (merge (cli/test-all-cmd {:tests-fn all-tests
                                       :opt-spec cli-opts})
+                   (cli/single-test-cmd {:test-fn  redis-test
+                                         :opt-spec cli-opts})
                    (cli/serve-cmd))
             args))
