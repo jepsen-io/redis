@@ -438,6 +438,8 @@
             :--loadmodule         (str dir "/redisraft.so")
             "loglevel=debug"
             (str "raft-log-filename=" raft-log-file)
+            (str "raft-log-max-file-size=" (:raft-log-max-file-size test))
+            (str "raft-log-max-cache-size=" (:raft-log-max-cache-size test))
             (when (:follower-proxy test) (str "follower-proxy=yes"))
             )))
 
