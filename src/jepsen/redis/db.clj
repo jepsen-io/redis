@@ -364,7 +364,7 @@
        meta-members (atom {})]
     (reify db/DB
       (setup! [this test node]
-        (db/setup! tcpdump test node)
+        (when (:tcpdump test) (db/setup! tcpdump test node))
         (c/su
           ; This is a total hack, but since we're grabbing private repos via SSH,
           ; we gotta prime SSH to know about github. Once this repo is public
@@ -413,7 +413,8 @@
 
         (db/kill! this test node)
         (c/su (c/exec :rm :-rf dir))
-        (db/teardown! tcpdump test node))
+        (when (:tcpdump test)
+          (db/teardown! tcpdump test node)))
 
       db/Primary
       (setup-primary! [_ test node])
@@ -616,4 +617,5 @@
                      (concat [log-file
                               (str dir "/" db-file)
                               (str dir "/" raft-log-file)]
-                             (db/log-files tcpdump test node))))))
+                             (when (:tcpdump test)
+                               (db/log-files tcpdump test node)))))))

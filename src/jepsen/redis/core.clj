@@ -142,6 +142,9 @@
     :parse-fn parse-long
     :validate [pos? "must be positive"]]
 
+   [nil "--tcpdump" "Create tcpdump logs for debugging client-server interaction"
+    :default false]
+
    ["-v" "--version VERSION" "What version of Redis should we test?"
     :default "f88f866"]
 
