@@ -130,14 +130,14 @@
     :parse-fn read-string
     :validate [#(and (number? %) (pos? %)) "must be a positive number"]]
 
-   [nil "--raft-log-max-file-size" "Size of the raft log, before compaction"
+   [nil "--raft-log-max-file-size BYTES" "Size of the raft log, before compaction"
     ; Default is 64MB, but we like to break things. This works out to about
     ; every 5 seconds with 5 clients.
     :default 32000
     :parse-fn parse-long
     :validate [pos? "must be positive"]]
 
-   [nil "--raft-log-max-cache-size" "Size of the in-memory Raft Log cache"
+   [nil "--raft-log-max-cache-size BYTES" "Size of the in-memory Raft Log cache"
     :default 1000000
     :parse-fn parse-long
     :validate [pos? "must be positive"]]
