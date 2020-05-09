@@ -5,6 +5,7 @@
                      [string :as str]]
             [jepsen [cli :as cli]
                     [checker :as checker]
+                    [control :as c]
                     [generator :as gen]
                     [tests :as tests]
                     [util :as util :refer [parse-long]]]
@@ -50,6 +51,20 @@
        (map keyword)
        (mapcat #(get special-nemeses % [%]))))
 
+(defn crash-checker
+  "Reports on unexpected process crashes in the logfiles. This is... a terrible
+  hack and will probably break in later versions of Jepsen; it relies on the
+  fact that the DB is still running. It's also going to break retrospective
+  analyses, but... better than nothing, and I'm short on time to cut a whole
+  new Jepsen release for this."
+  []
+  (reify checker/Checker
+    (check [this test history opts]
+      (if-let [crashes (rdb/logged-crashes test)]
+        {:valid?  false
+         :crashes crashes}
+        {:valid? true}))))
+
 (defn redis-test
   "Builds up a Redis test from CLI options."
   [opts]
@@ -74,6 +89,7 @@
                           {:perf        (checker/perf
                                           {:nemeses (:perf nemesis)})
                            :clock       (checker/clock-plot)
+                           :crash       (crash-checker)
                            :stats       (checker/stats)
                            :exceptions  (checker/unhandled-exceptions)
                            :workload    (:checker workload)})

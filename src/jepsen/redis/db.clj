@@ -106,7 +106,7 @@
           (c/exec :git :submodule :init)
           (c/exec :git :submodule :update)
           ;(c/exec :make :clean)
-          (c/exec :make :cleanall) ; This is supposed to work but it crashes :(
+          (c/exec :make :cleanall)
           (c/exec :make))
         dir))))
 
@@ -619,3 +619,21 @@
                               (str dir "/" raft-log-file)]
                              (when (:tcpdump test)
                                (db/log-files tcpdump test node)))))))
+
+(def crash-pattern
+  "An egrep pattern we use to find crashes in the redis logs."
+  "panic|assert|bug report|stack trace")
+
+(defn logged-crashes
+  "Takes a test, and returns a map of nodes to strings from their redis logs
+  that look like crashes, or nil if no crashes occurred."
+  ([test]
+   (let [crashes (->> (c/on-many (:nodes test)
+                                 (try+
+                                   (c/exec :egrep :-i crash-pattern log-file)
+                                   (catch [:type :jepsen.control/nonzero-exit] e
+                                     nil)))
+                      (keep (fn [[k v :as pair]]
+                              (when v pair))))]
+     (when (seq crashes)
+       (into {} crashes)))))
