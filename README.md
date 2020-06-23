@@ -6,7 +6,7 @@ library](https://jepsen.io), for
 workload (`jepsen.redis.append`) based on list append, implemented using
 `LRANGE` and `RPUSH`, which uses [Elle](https://github.com/jepsen-io/elle) to find transactional anomalies up to strict serializability.
 
-We include a wide variety of faults, including
+We include a wide variety of faults, including network partitions, process crashes, pauses, clock skew, and membership changes.
 
 ## Prerequisites
 

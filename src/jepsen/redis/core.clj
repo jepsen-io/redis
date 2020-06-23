@@ -139,7 +139,7 @@
     :default true]
 
    [nil "--raft-version VERSION" "What version of redis-raft should we test?"
-    :default "1b3fbf6"]
+    :default "e0123a9"]
 
    ["-r" "--rate HZ" "Approximate number of requests per second per thread"
     :default 10
@@ -162,7 +162,7 @@
     :default false]
 
    ["-v" "--version VERSION" "What version of Redis should we test?"
-    :default "f88f866"]
+    :default "6.0.3"]
 
    ["-w" "--workload NAME" "What workload should we run?"
     :parse-fn keyword
