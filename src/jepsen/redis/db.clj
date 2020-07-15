@@ -23,11 +23,11 @@
 
 (def redis-raft-repo
   "Where can we clone redis-raft from?"
-  "git@github.com:RedisLabs/redisraft.git")
+  "https://github.com/RedisLabs/redisraft")
 
 (def redis-repo
   "Where can we clone redis from?"
-  "git@github.com:antirez/redis.git")
+  "https://github.com/redis/redis")
 
 (def dir
   "The remote directory where we deploy redis to"
