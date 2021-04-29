@@ -21,14 +21,6 @@
   "A remote directory for us to clone projects and compile them."
   "/tmp/jepsen/build")
 
-(def redis-raft-repo
-  "Where can we clone redis-raft from?"
-  "https://github.com/RedisLabs/redisraft")
-
-(def redis-repo
-  "Where can we clone redis from?"
-  "https://github.com/redis/redis")
-
 (def dir
   "The remote directory where we deploy redis to"
   "/opt/redis")
@@ -100,7 +92,7 @@
   [test node]
   (let [version (:raft-version test)]
     (with-build-version node "redis-raft" version
-      (let [dir (checkout-repo! redis-raft-repo "redis-raft" version)]
+      (let [dir (checkout-repo! (:raft-repo test) "redis-raft" version)]
         (info "Building redis-raft" (:raft-version test))
         (c/cd dir
           (c/exec :git :submodule :init)
@@ -115,8 +107,8 @@
   [test node]
   (let [version (:version test)]
     (with-build-version node "redis" version
-      (let [dir (checkout-repo! redis-repo "redis" (:version test))]
-        (info "Building redis" (:version test))
+      (let [dir (checkout-repo! (:redis-repo test) "redis" (:redis-version test))]
+        (info "Building redis" (:redis-version test))
         (c/cd dir
           (c/exec :make :distclean)
           (c/exec :make))

@@ -139,7 +139,10 @@
     :default true]
 
    [nil "--raft-version VERSION" "What version of redis-raft should we test?"
-    :default "e0123a9"]
+    :default "master"]
+
+   [nil "--raft-repo URL" "Where we clone redis-raft from?"
+    :default "https://github.com/redislabs/redisraft"]
 
    ["-r" "--rate HZ" "Approximate number of requests per second per thread"
     :default 10
@@ -161,8 +164,11 @@
    [nil "--tcpdump" "Create tcpdump logs for debugging client-server interaction"
     :default false]
 
-   ["-v" "--version VERSION" "What version of Redis should we test?"
-    :default "6.0.3"]
+   [nil "--redis-version VERSION" "What version of Redis should we test?"
+    :default "unstable"]
+
+   [nil "--redis-repo URL" "Where we clone redis from?"
+    :default "https://github.com/redis/redis"]
 
    ["-w" "--workload NAME" "What workload should we run?"
     :parse-fn keyword
