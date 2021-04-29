@@ -105,7 +105,7 @@
 (defn build-redis!
   "Compiles redis, and returns the directory we built in."
   [test node]
-  (let [version (:version test)]
+  (let [version (:redis-version test)]
     (with-build-version node "redis" version
       (let [dir (checkout-repo! (:redis-repo test) "redis" (:redis-version test))]
         (info "Building redis" (:redis-version test))
@@ -328,8 +328,8 @@
         (throw e)))))
 
 (defn redis-raft
-  "Sets up a Redis-Raft based cluster. Tests should include a :version option,
-  which will be the git SHA or tag to build."
+  "Sets up a Redis-Raft based cluster. Tests should include :redis-version
+  and :raft-version options, which will be the git SHA or tag to build."
   []
   (let [tcpdump (db/tcpdump {:ports [6379]
                              ; HAAACK, this is hardcoded for my cluster control

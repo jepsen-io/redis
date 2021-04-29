@@ -98,7 +98,7 @@
                              (gen/stagger (/ (:rate opts)))
                              (gen/nemesis (:generator nemesis))
                              (gen/time-limit (:time-limit opts)))
-            :name       (str "redis " (:version opts)
+            :name       (str "redis " (:redis-version opts)
                              " (raft " (:raft-version opts) ") "
                              (when (:follower-proxy opts)
                                "proxy ")
@@ -139,7 +139,7 @@
     :default true]
 
    [nil "--raft-version VERSION" "What version of redis-raft should we test?"
-    :default "master"]
+    :default "407ed4e"]
 
    [nil "--raft-repo URL" "Where we clone redis-raft from?"
     :default "https://github.com/redislabs/redisraft"]
@@ -165,7 +165,7 @@
     :default false]
 
    [nil "--redis-version VERSION" "What version of Redis should we test?"
-    :default "unstable"]
+    :default "6.2.2"]
 
    [nil "--redis-repo URL" "Where we clone redis from?"
     :default "https://github.com/redis/redis"]
