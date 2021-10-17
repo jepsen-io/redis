@@ -609,6 +609,7 @@
                      (concat [log-file
                               (str dir "/" db-file)
                               (str dir "/" raft-log-file)]
+                             (filter #(re-matches #".*/core\.?\d*" %) (cu/ls-full dir))
                              (when (:tcpdump test)
                                (db/log-files tcpdump test node)))))))
 
