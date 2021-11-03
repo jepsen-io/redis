@@ -6,6 +6,6 @@
   :dependencies [[org.clojure/clojure "1.10.0"]
                  [jepsen "0.1.18"]
                  [com.taoensso/carmine "2.19.1"]]
-  :jvm-opts ["-Djava.awt.headless=true"]
+  :jvm-opts ["-Xmx4g" "-Djava.awt.headless=true"]
   :repl-options {:init-ns jepsen.redis.core}
   :main jepsen.redis.core)
