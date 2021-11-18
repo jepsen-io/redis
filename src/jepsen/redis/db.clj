@@ -424,6 +424,7 @@
              :chdir   dir}
             binary
             ; config-file
+            :--protected-mode         "no"
             :--bind                   "0.0.0.0"
             :--dbfilename             db-file
             :--loadmodule             (str dir "/redisraft.so")
