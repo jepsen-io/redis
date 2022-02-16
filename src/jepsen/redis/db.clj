@@ -94,10 +94,12 @@
     (with-build-version node "redis-raft" version
       (let [dir (checkout-repo! (:raft-repo test) "redis-raft" version)]
         (info "Building redis-raft" (:raft-version test))
-        (c/cd dir
-          ;(c/exec :make :clean)
-          (c/exec :make :cleanall)
-          (c/exec :make))
+        (let [build-dir (str dir "/build")]
+          (c/cd build-dir
+            (c/exec :mkdir :-p build-dir)
+            (c/exec :cmake :..)
+            (c/exec :make))
+          build-dir)
         dir))))
 
 (defn build-redis!
