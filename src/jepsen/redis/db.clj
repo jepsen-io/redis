@@ -192,7 +192,7 @@
                          (let [section (keyword (.toLowerCase (m 1)))]
                            [s section])
 
-                         (if-let [[_ k v] (re-find #"^(.+?):(.+)$" line)]
+                         (if-let [[_ k v] (re-find #"^(.+?):(.*)$" line)]
                            ; k:v pair
                            (let [[ks v] (parse-raft-info-kv section k v)]
                              [(assoc-in s ks v) section])
@@ -210,8 +210,8 @@
   node set."
   [node id]
   (let [r (try+ (raft-info)
-                (catch [:exit 1] e
-                  :retry)
+                (catch [:exit 1] e :retry)
+                (catch [:exit 255] e :retry)
                 (catch Throwable e
                   (warn e "Crash fetching raft-info")
                   :retry))]
@@ -269,6 +269,7 @@
                                                  :node node})))
                                    ; Couldn't run redis-cli
                                    (catch [:exit 1]   e [])
+                                   (catch [:exit 255]   e [])
                                    (catch [:exit 124] e []))))]
     ; Now we merge information from all nodes.
     (->> states
