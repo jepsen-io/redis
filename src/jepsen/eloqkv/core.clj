@@ -56,9 +56,11 @@
        (mapcat #(get special-nemeses % [%]))))
 
 (defn parse-internal-nodes-spec
-  "Takes a comma-separated string and returns a collection of nodes name."
+  "Takes a comma-separated string and returns a collection of node names."
   [spec]
-  (->> (str/split spec #",")))
+  (when spec
+    (->> (str/split spec #",")
+         (remove str/blank?))))
 
 (defn crash-checker
   "Reports on unexpected process crashes in the logfiles. This is... a terrible
@@ -73,6 +75,11 @@
         {:valid?  false
          :crashes crashes}
         {:valid? true}))))
+
+(defn no-checker []
+  (reify checker/Checker
+    (check [this test history opts]
+      {:valid? true})))
 
 (defn redis-test
   "Builds up a Redis test from CLI options."
@@ -101,7 +108,9 @@
     (let [test_opt (merge tests/noop-test
                           opts
                           workload
-                          {:checker    (checker/compose
+                          {
+                          ;;  :checker    (no-checker)
+                           :checker    (checker/compose
                                         {:perf        (checker/perf
                                                        {:nemeses (:perf nemesis)})
                                          :clock       (checker/clock-plot)
@@ -119,7 +128,8 @@
                                             (str/join "," (map name (:nemesis opts))))
                            :concurrency 6
                            :nemesis    (:nemesis nemesis)
-                           :os         ubuntu/os})]
+                           :os         ubuntu/os
+                           })]
       (info "test_opt:" test_opt)
       test_opt)))
 
@@ -192,8 +202,11 @@
    [nil "--auto-start" "Enable auto start EloqKV cluster"
     :default false]
 
-   [nil "--internal-nodes nodes-list" "A comma-separated list of internal nodes which provide log service and storage service"
-    :parse-fn parse-internal-nodes-spec]
+   [nil 
+    "--internal-nodes nodes-list"
+    "A comma-separated list of internal nodes which provide log and storage service"
+    :parse-fn parse-internal-nodes-spec
+    :default []]  
 
    ["-w" "--workload NAME" "What workload should we run?"
     :parse-fn keyword

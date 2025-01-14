@@ -54,28 +54,67 @@ def run_command(command, timeout=None):
 
 
 def recover():
-    # Save the output of the eloqctl status eloqkv-cluster command to a variable
-    status_output, _ = run_command("eloqctl status eloqkv-cluster")
+    # Run the status command and capture its output
+    try:
+        status_output, _ = run_command("eloqctl status eloqkv-cluster")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to get cluster status: {e}")
+        return
 
-    # Extract hosts and PIDs using regular expressions
-    hosts = re.findall(r"host=([^,]+)", status_output)  # Extract host IP addresses
-    pids = [
-        int(pid) for pid in re.findall(r"pid: (\d+)", status_output)
-    ]  # Extract PIDs
+    # Split the output into blocks for each host
+    blocks = status_output.strip().split("---------------------------")
 
-    # Create a dictionary to map hosts to their corresponding PIDs
-    host_pid = dict(zip(hosts, pids))
+    running_nodes = {}
+    dead_nodes = []
 
-    # Iterate through the host-PID pairs
-    for host, pid in host_pid.items():
-        logger.info(f"Host: {host}, PID: {pid}")
+    for block in blocks:
+        if not block.strip():
+            continue  # Skip empty blocks
 
-        # Reset iptables and resume the process
+        # Extract host IP
+        host_match = re.search(r"host=([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)", block)
+        if not host_match:
+            logger.warning(f"Could not find host in block:\n{block}")
+            continue
+        host = host_match.group(1)
+
+        # Check if service is running by looking for pid
+        pid_match = re.search(r"pid:\s*(\d+)", block)
+        if pid_match:
+            pid = int(pid_match.group(1))
+            running_nodes[host] = pid
+            logger.info(f"Host {host} is running with PID {pid}")
+        else:
+            # Service is down
+            dead_nodes.append(host)
+            logger.info(f"Host {host} is down")
+
+    # Handle running nodes: reset iptables and resume process
+    for host, pid in running_nodes.items():
+        logger.info(f"Handling running host: {host}, PID: {pid}")
         try:
+            # Reset iptables
             run_command(f"ssh {host} 'sudo iptables -F'")
+            logger.info(f"Iptables reset on {host}")
+
+            # Resume the process
             run_command(f"ssh {host} 'kill -CONT {pid}'")
+            logger.info(f"Process {pid} on {host} resumed")
         except subprocess.CalledProcessError as e:
             logger.warning(f"Failed to execute command on {host}: {e}")
+
+    # Handle dead nodes: start the service
+    if dead_nodes:
+        nodes_to_start = ",".join([f"{host}:6389" for host in dead_nodes])
+        start_command = f"eloqctl start --nodes {nodes_to_start} eloqkv-cluster"
+        logger.info(f"Starting dead nodes with command: {start_command}")
+        try:
+            start_output, _ = run_command(start_command)
+            logger.info(f"Start command output: {start_output}")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to start dead nodes: {e}")
+    else:
+        logger.info("No dead nodes detected. No need to start any services.")
 
 
 def start_eloqkv_cluster():
@@ -90,7 +129,7 @@ def run_jepsen_test():
 
         _, return_code = run_command("bash scripts/jepsen_cmd.sh")
         logger.info(f"jepsen return code:{return_code}")
-        
+
         if return_code != 0 and not check_error_in_jepsen_log(
             "./store/current/jepsen.log"
         ):
@@ -106,12 +145,12 @@ def run_jepsen_test():
 
 # Define the command and arguments
 redis_command = "redis-cli -h {node} -p 6389 {command}"
-node_list = ["store-1", "store-2", "compute-6"]
-log_node = "compute-5"
+node_list = ["store-4", "store-5", "store-6"]
+log_node = "store-8"
 rsync_command = "rsync -azL '{source_dir}' '{destination_dir}'"
 rsync_remote_command = "rsync -azL -e ssh eloq@{node}:{source_dir} {destination_dir}"
 flushdb_command = redis_command.format(node=node_list[0], command="flushdb")
-rsync_super_server_command = "rsync -azL -e ssh error_log eloq@192.168.1.59:~/"
+# rsync_super_server_command = "rsync -azL -e ssh error_log eloq@compute-1:/home/eloq/workspace/jepsen-eloqkv/.vscode/log"
 
 
 def save_error_log():
@@ -141,27 +180,37 @@ def save_error_log():
             rsync_remote_command.format(
                 node=node,
                 source_dir="~/eloqkv-cluster/EloqKV/logs/tx-6389/host_manager.log.INFO",
-                destination_dir=os.path.join(node_destination_dir, "host_manager.log.INFO"),
+                destination_dir=os.path.join(
+                    node_destination_dir, "host_manager.log.INFO"
+                ),
             )
         )
         run_command(
             rsync_remote_command.format(
                 node=node,
-                source_dir="~/eloqkv-cluster/EloqKV/logs/std-out-6389",
+                source_dir="~/eloqkv-cluster/EloqKV/logs/std-output/std-out-6389",
                 destination_dir=os.path.join(node_destination_dir, "std-out-6389"),
             )
         )
-    run_command(rsync_super_server_command)
+
+    # run_command(rsync_super_server_command)
+    # rsync for log_node
+    log_node_destination_dir = os.path.join(root_dir, log_node)
+    os.makedirs(log_node_destination_dir, exist_ok=True)
     run_command(
-        rsync_command.format(
+        rsync_remote_command.format(
+            node=log_node,
             source_dir="/home/eloq/eloqkv-cluster/LogServer/logs/g0n0/log-service.log.INFO",
-            destination_dir=root_dir,
+            destination_dir=os.path.join(
+                log_node_destination_dir, "log-service.log.INFO"
+            ),
         )
     )
-    remote_root_dir = f"~/{root_dir}"
-    send_email(
-        f"Detect failures related to Jepsen test or Eloqkv crash. Please refer eloq@192.168.1.59:{remote_root_dir} for more details."
-    )
+
+    # remote_root_dir = f"~/{root_dir}"
+    # send_email(
+    #     f"Detect failures related to Jepsen test or Eloqkv crash. Please refer eloq@compute-1:{remote_root_dir} for more details."
+    # )
 
 
 def flushdb():
@@ -198,7 +247,8 @@ def check_client_num():
 
 
 def check_stdout_log():
-    root_dir = "tmp_stdout"
+    # TODO(ZX) need to check log in a period of time
+    root_dir = "/home/eloq/workspace/jepsen-eloqkv/.vscode/log/tmp_stdout"
     os.makedirs(root_dir, exist_ok=True)
 
     for node in node_list:
@@ -208,11 +258,12 @@ def check_stdout_log():
         run_command(
             rsync_remote_command.format(
                 node=node,
-                source_dir="~/eloqkv-cluster/EloqKV/logs/std-out-6389",
+                source_dir="~/eloqkv-cluster/EloqKV/logs/std-output/std-out-6389",
                 destination_dir=stdout_file,
             )
         )
         if not check_error_in_eloqkv_log(stdout_file):
+            logger.warning(f"zx find bug in eloqkv log")
             return False
     return True
 

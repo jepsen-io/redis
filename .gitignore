@@ -24,3 +24,5 @@ error_log
 .env
 nohup.out
 tmp_stdout/
+
+.vscode

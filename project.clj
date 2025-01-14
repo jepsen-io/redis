@@ -7,5 +7,5 @@
                  [jepsen "0.1.18"]
                  [com.taoensso/carmine "2.19.1"]]
   :jvm-opts ["-Djava.awt.headless=true"]
-  :repl-options {:init-ns jepsen.elopkv.core}
+  :repl-options {:init-ns jepsen.eloqkv.core}
   :main jepsen.eloqkv.core)

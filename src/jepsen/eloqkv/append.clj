@@ -45,15 +45,33 @@
   client/Client
   (open! [this test node]
     (try
-      (info "internal node: " (:internal-nodes test))
-      (if (some #(= % node) (:internal-nodes test))
+      (info "internal node(s): " (or (:internal-nodes test) []))
+      (if (some #(= % node) (or (:internal-nodes test) []))
+        ;; It's an internal node; just store nil for `conn` but still return a record
         (assoc this :conn nil)
         (rc/delay-exceptions 5
-                             (let [c (rc/open node)]
-                               (info "connect to node:" node)
-                               (assoc this :conn (rc/open node)))))
+          (let [c (rc/open node)]
+            (info "connect to node:" node)
+            (assoc this :conn (rc/open node)))))
+
       (catch java.net.ConnectException e
-        (warn "Caught exception during open connection on node " node ". Error message: " (.getMessage e)))))
+        (warn "Caught exception during open connection on node" node
+              ". Error message:" (.getMessage e))
+        ;; (assoc this :conn nil)
+      )
+
+      ;; NEW: catch InterruptedException 
+      (catch InterruptedException e
+        (warn "Sleep was interrupted while opening node" node e)
+        ;; (assoc this :conn nil)
+      )
+
+      ;; If you want to be extra safe, 
+      ;; you could catch *all* exceptions and return the record:
+      ;; (catch Throwable t
+      ;;   (warn "Some other error in open!" t)
+      ;;   (assoc this :conn nil))
+      ))
 
   (setup! [_ test])
 
@@ -108,6 +126,7 @@
                     :additional-graphs [elle/realtime-graph]
                     :consistency-models [:repeatable-read]})
       (assoc :client (Client. nil))
+      ;; (info "client:" (:client test-opt))
 ;      (update :checker #(checker/compose {:workload %
 ;                                          :timeline (timeline/html)}))
       ))
