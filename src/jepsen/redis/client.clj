@@ -76,8 +76,8 @@
            (catch [:prefix :nocluster] e#
              (assoc ~op :type :fail, :error :nocluster))
 
-           (catch [:prefix :noleader] e#
-             (assoc ~op :type :fail, :error :noleader))
+           (catch [:prefix :clusterdown] e#
+             (assoc ~op :type :fail, :error :clusterdown))
 
            (catch [:prefix :notleader] e#
              (assoc ~op :type :fail, :error :notleader))

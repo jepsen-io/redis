@@ -119,7 +119,11 @@
 
    ; For redis-raft, now removed
    ;[nil "--raft-version VERSION" "What version of redis-raft should we test?"
-   ; :default "e0123a9"]
+   ; :default "407ed4e"]
+
+   ; For redis-raft, now removed
+   ;[nil "--raft-repo URL" "Where we clone redis-raft from?"
+   ; :default "https://github.com/redislabs/redisraft"]
 
    ["-r" "--rate HZ" "Approximate number of requests per second per thread"
     :default 10
@@ -145,7 +149,11 @@
 
    ; For redis-raft, now removed
    ;["-v" "--version VERSION" "What version of Redis should we test?"
-   ; :default "6.0.3"]
+   ; :default "6.2.2"]
+
+   ; For redis-raft, now removed
+   ; [nil "--redis-repo URL" "Where we clone redis from?"
+   ; :default "https://github.com/redis/redis"]
 
    ["-w" "--workload NAME" "What workload should we run?"
     :default :append
