@@ -65,7 +65,7 @@
   (kill! [this test node]
     (cu/kill-bin! :KILL true bin)
     (try+ (c/su (c/exec :service "redis-server" :stop))
-          (catch [:exit 1] e
+          (catch (#{1 5} (:exit %)) e
             :service-does-not-exist)))
 
   db/Pause
