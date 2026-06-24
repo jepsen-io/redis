@@ -10,7 +10,7 @@
             [jepsen [control :as c]
                     [core :as jepsen]
                     [db :as db]
-                    [util :as util :refer [parse-long]]]
+                    [util :as util]]
             [jepsen.control [net :as cn]
                             [util :as cu]]
             [jepsen.redis [client :as rc]]
@@ -23,11 +23,11 @@
 
 (def redis-raft-repo
   "Where can we clone redis-raft from?"
-  "git@github.com:RedisLabs/redisraft.git")
+  "https://github.com/RedisLabs/redisraft.git")
 
 (def redis-repo
   "Where can we clone redis from?"
-  "git@github.com:antirez/redis.git")
+  "https://github.com/redis/redis.git")
 
 (def dir
   "The remote directory where we deploy redis to"
@@ -48,7 +48,7 @@
 (defn install-build-tools!
   "Installs prerequisite packages for building redis and redisraft."
   []
-  (debian/install [:build-essential :cmake :libbsd-dev :libtool :autoconf :automake]))
+  (debian/install [:git :build-essential :cmake :libbsd-dev :libtool :autoconf :automake]))
 
 (defn checkout-repo!
   "Checks out a repo at the given version into a directory in build/ named
@@ -366,13 +366,6 @@
       (setup! [this test node]
         (when (:tcpdump test) (db/setup! tcpdump test node))
         (c/su
-          ; This is a total hack, but since we're grabbing private repos via SSH,
-          ; we gotta prime SSH to know about github. Once this repo is public
-          ; this nonsense can go away. Definitely not secure, but are we REALLY
-          ; being MITMed right now?
-          ; (c/exec :ssh-keyscan :-t :rsa "github.com"
-          ;        :>> (c/lit "~/.ssh/known_hosts"))
-
           ; Build and install
           (install-build-tools!)
           (let [redis      (future (-> test (build-redis! node) deploy-redis!))

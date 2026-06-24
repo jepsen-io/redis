@@ -6,7 +6,7 @@
             [jepsen [checker :as checker]
                     [client :as client]
                     [generator :as gen]
-                    [util :as util :refer [parse-long]]]
+                    [util :as util]]
             [jepsen.checker.timeline :as timeline]
             [jepsen.tests.cycle.append :as append]
             [jepsen.redis [client :as rc]]

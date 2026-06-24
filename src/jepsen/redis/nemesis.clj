@@ -142,7 +142,6 @@
          (partition 2)
          random-sublist
          (map (fn [[f v]] {:type :info, :f f, :value v}))
-         gen/seq
          (gen/delay (:interval opts))))
   (->> [:leave "n1"
         :leave "n2"
@@ -161,7 +160,6 @@
        (partition 2)
        cycle
        (map (fn [[f v]] {:type :info, :f f, :value v}))
-       gen/seq
        (gen/delay (:interval opts))))
 
 (defn member-package

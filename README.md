@@ -60,33 +60,9 @@ To see all options, try
 lein run test-all --help
 ```
 
-## FAQ
-
-### Host key verification failed
-
-```
-Cloning into 'redis'...
-Host key verification failed.
-fatal: Could not read from remote repository.
-```
-
-Redis-Raft is a private repo, and we clone it directly from Github. That means
-your root user on each DB node will need an SSH key with read access to that
-repo installed on each DB node, and git on each DB node will need to know about
-the SSH key for GitHub. You should verify the host key from GH directly, rather
-than keyscanning it. If you like to live dangerously, which, again, you should
-not, you can blindly accept whatever key you get via:
-
-```
-ssh n1 "sudo bash -c 'ssh-keyscan github.com >> ~/.ssh/known_hosts'"
-ssh n2 ...
-ssh n3 ...
-...
-```
-
 ## License
 
-Copyright © 2020 Jepsen, LLC
+Copyright © Jepsen, LLC
 
 This program and the accompanying materials are made available under the
 terms of the Eclipse Public License 2.0 which is available at

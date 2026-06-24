@@ -8,7 +8,7 @@
                     [control :as c]
                     [generator :as gen]
                     [tests :as tests]
-                    [util :as util :refer [parse-long]]]
+                    [util :as util]]
             [jepsen.os.debian :as debian]
             [jepsen.redis [append :as append]
                           [db     :as rdb]
