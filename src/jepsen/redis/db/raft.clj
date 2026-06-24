@@ -1,5 +1,5 @@
-(ns jepsen.redis.db
-  "Database automation"
+(ns jepsen.redis.db.raft
+  "Database automation for the RedisRaft replicated Redis setup. RedisRaft looks to no longer be maintained in 2026, but I'm setting this aside in case we want to try dusting it off later."
   (:require [taoensso.carmine :as car :refer [wcar]]
             [clojure.java [io :as io]
                           [shell :as shell]]

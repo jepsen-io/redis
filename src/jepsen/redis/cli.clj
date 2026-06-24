@@ -1,4 +1,4 @@
-(ns jepsen.redis.core
+(ns jepsen.redis.cli
   "Top-level test runner, integration point for various workloads and nemeses."
   (:require [clojure.tools.logging :refer [info warn]]
             [clojure [pprint :refer [pprint]]
@@ -11,8 +11,8 @@
                     [util :as util]]
             [jepsen.os.debian :as debian]
             [jepsen.redis [append :as append]
-                          [db     :as rdb]
-                          [nemesis :as nemesis]]))
+                          [nemesis :as nemesis]]
+            [jepsen.redis.db.single :as db.single]))
 
 (def workloads
   "A map of workload names to functions that can take opts and construct
@@ -33,15 +33,13 @@
    [:pause]
    [:kill]
    [:partition]
-   [:island]
-   [:mystery]
-   [:pause :kill :partition :clock :member]])
+   [:pause :kill :partition :clock]])
 
 (def special-nemeses
   "A map of special nemesis names to collections of faults"
   {:none      []
-   :standard  [:pause :kill :partition :clock :member]
-   :all       [:pause :kill :partition :clock :member :island :mystery]})
+   :standard  [:pause :kill :partition :clock]
+   :all       [:pause :kill :partition :clock]})
 
 (defn parse-nemesis-spec
   "Takes a comma-separated nemesis string and returns a collection of keyword
@@ -51,25 +49,11 @@
        (map keyword)
        (mapcat #(get special-nemeses % [%]))))
 
-(defn crash-checker
-  "Reports on unexpected process crashes in the logfiles. This is... a terrible
-  hack and will probably break in later versions of Jepsen; it relies on the
-  fact that the DB is still running. It's also going to break retrospective
-  analyses, but... better than nothing, and I'm short on time to cut a whole
-  new Jepsen release for this."
-  []
-  (reify checker/Checker
-    (check [this test history opts]
-      (if-let [crashes (rdb/logged-crashes test)]
-        {:valid?  false
-         :crashes crashes}
-        {:valid? true}))))
-
 (defn redis-test
   "Builds up a Redis test from CLI options."
   [opts]
   (let [workload ((workloads (:workload opts)) opts)
-        db        (rdb/redis-raft)
+        db        (db.single/db)
         nemesis   (nemesis/package
                     {:db      db
                      :nodes   (:nodes opts)
@@ -79,9 +63,7 @@
                                            :majorities-ring]}
                      :pause     {:targets [:primaries :majority]}
                      :kill      {:targets [:primaries :majority :all]}
-                     :interval  (:nemesis-interval opts)})
-        _ (info (pr-str nemesis))
-        ]
+                     :interval  (:nemesis-interval opts)})]
     (merge tests/noop-test
            opts
            workload
@@ -89,7 +71,6 @@
                           {:perf        (checker/perf
                                           {:nemeses (:perf nemesis)})
                            :clock       (checker/clock-plot)
-                           :crash       (crash-checker)
                            :stats       (checker/stats)
                            :exceptions  (checker/unhandled-exceptions)
                            :workload    (:checker workload)})
@@ -98,19 +79,16 @@
                              (gen/stagger (/ (:rate opts)))
                              (gen/nemesis (:generator nemesis))
                              (gen/time-limit (:time-limit opts)))
-            :name       (str "redis " (:version opts)
-                             " (raft " (:raft-version opts) ") "
-                             (when (:follower-proxy opts)
-                               "proxy ")
-                             (name (:workload opts)) " "
+            :name       (str (name (:workload opts)) " "
                              (str/join "," (map name (:nemesis opts))))
             :nemesis    (:nemesis nemesis)
             :os         debian/os})))
 
 (def cli-opts
   "Options for test runners."
-  [[nil "--follower-proxy" "If true, proxy requests from followers to leader."
-    :default false]
+  [; For redis-raft, now unused
+   ;[nil "--follower-proxy" "If true, proxy requests from followers to leader."
+   ; :default false]
 
    [nil "--key-count INT" "For the append test, how many keys should we test at once?"
     :parse-fn parse-long
@@ -135,34 +113,39 @@
     :parse-fn read-string
     :validate [#(and (number? %) (pos? %)) "must be a positive number"]]
 
-   [nil "--nuke-after-leave" "If true, kills and wipes data files for nodes after they leave the cluster. Enabling this flag lets the test run for longer, but also prevents us from seeing misbehavior by nodes which SOME nodes think are removed, but which haven't yet figured it out themselves. We have this because Redis doesn't actually shut nodes down when they find out they're removed."
-    :default true]
+   ; For redis-raft, now removed
+   ;[nil "--nuke-after-leave" "If true, kills and wipes data files for nodes after they leave the cluster. Enabling this flag lets the test run for longer, but also prevents us from seeing misbehavior by nodes which SOME nodes think are removed, but which haven't yet figured it out themselves. We have this because Redis doesn't actually shut nodes down when they find out they're removed."
+    ;:default true]
 
-   [nil "--raft-version VERSION" "What version of redis-raft should we test?"
-    :default "e0123a9"]
+   ; For redis-raft, now removed
+   ;[nil "--raft-version VERSION" "What version of redis-raft should we test?"
+   ; :default "e0123a9"]
 
    ["-r" "--rate HZ" "Approximate number of requests per second per thread"
     :default 10
     :parse-fn read-string
     :validate [#(and (number? %) (pos? %)) "must be a positive number"]]
 
-   [nil "--raft-log-max-file-size BYTES" "Size of the raft log, before compaction"
+   ; For redis-raft, now removed
+   ;[nil "--raft-log-max-file-size BYTES" "Size of the raft log, before compaction"
     ; Default is 64MB, but we like to break things. This works out to about
     ; every 5 seconds with 5 clients.
-    :default 32000
-    :parse-fn parse-long
-    :validate [pos? "must be positive"]]
+    ;:default 32000
+    ;:parse-fn parse-long
+    ;:validate [pos? "must be positive"]]
 
-   [nil "--raft-log-max-cache-size BYTES" "Size of the in-memory Raft Log cache"
-    :default 1000000
-    :parse-fn parse-long
-    :validate [pos? "must be positive"]]
+   ; For redis-raft, now removed
+   ;[nil "--raft-log-max-cache-size BYTES" "Size of the in-memory Raft Log cache"
+   ; :default 1000000
+   ; :parse-fn parse-long
+   ; :validate [pos? "must be positive"]]
 
-   [nil "--tcpdump" "Create tcpdump logs for debugging client-server interaction"
-    :default false]
+   ;[nil "--tcpdump" "Create tcpdump logs for debugging client-server interaction"
+   ; :default false]
 
-   ["-v" "--version VERSION" "What version of Redis should we test?"
-    :default "6.0.3"]
+   ; For redis-raft, now removed
+   ;["-v" "--version VERSION" "What version of Redis should we test?"
+   ; :default "6.0.3"]
 
    ["-w" "--workload NAME" "What workload should we run?"
     :default :append
