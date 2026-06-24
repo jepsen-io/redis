@@ -165,6 +165,7 @@
     :default "6.0.3"]
 
    ["-w" "--workload NAME" "What workload should we run?"
+    :default :append
     :parse-fn keyword
     :validate [workloads (cli/one-of workloads)]]])
 
