@@ -1,5 +1,6 @@
 (ns jepsen.redis.cli
   "Top-level test runner, integration point for various workloads and nemeses."
+  (:gen-class)
   (:require [clojure.tools.logging :refer [info warn]]
             [clojure [pprint :refer [pprint]]
                      [string :as str]]

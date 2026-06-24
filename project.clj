@@ -1,4 +1,4 @@
-(defproject jepsen.redis "0.2.0-SNAPSHOT"
+(defproject io.jepsen/redis "0.2.0-SNAPSHOT"
   :description "Jepsen tests for Redis"
   :url "https://github.com/jepsen-io/redis"
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
@@ -9,4 +9,5 @@
   :jvm-opts ["-Djava.awt.headless=true"
              "-server"]
   :repl-options {:init-ns jepsen.redis.cli}
+  :aot [jepsen.redis.cli]
   :main jepsen.redis.cli)
