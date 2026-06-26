@@ -59,6 +59,9 @@
   [op idempotent & body]
   `(let [crash# (if (~idempotent (:f ~op)) :fail :info)]
      (try+ ~@body
+           (catch [:prefix :crossslot] e#
+             (assoc ~op :type :fail, :error :cross-slot))
+
            (catch [:prefix :err] e#
              (condp re-find (.getMessage (:throwable ~'&throw-context))
                ; These two would ordinarily be our fault, but are actually

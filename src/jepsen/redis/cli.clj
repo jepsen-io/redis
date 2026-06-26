@@ -13,7 +13,14 @@
             [jepsen.os.debian :as debian]
             [jepsen.redis [append :as append]
                           [nemesis :as nemesis]]
-            [jepsen.redis.db.single :as db.single]))
+            [jepsen.redis.db [single :as db.single]
+                             [cluster :as db.cluster]]))
+
+(def db-types
+  "A map of keyword DB names to functions that take CLI opts and construct DB
+  instances."
+  {:single  db.single/db
+   :cluster db.cluster/db})
 
 (def workloads
   "A map of workload names to functions that can take opts and construct
@@ -54,7 +61,7 @@
   "Builds up a Redis test from CLI options."
   [opts]
   (let [workload ((workloads (:workload opts)) opts)
-        db        (db.single/db)
+        db        ((db-types (:db-type opts)) opts)
         nemesis   (nemesis/package
                     {:db      db
                      :nodes   (:nodes opts)
@@ -87,7 +94,19 @@
 
 (def cli-opts
   "Options for test runners."
-  [; For redis-raft, now unused
+  [[nil "--[no]-append-only" "Enables or disables the append-only file."
+    :default true]
+
+   [nil "--cluster-replicas COUNT" "Number of cluster replicas."
+    :parse-fn parse-long
+    :default 1]
+
+   [nil "--db-type TYPE" "Either single, for a single-node deployment, or cluster, for a Redis Cluster deployment."
+    :default :cluster
+    :parse-fn keyword
+    :validate [db-types (cli/one-of db-types)]]
+
+   ; For redis-raft, now unused
    ;[nil "--follower-proxy" "If true, proxy requests from followers to leader."
    ; :default false]
 

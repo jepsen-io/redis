@@ -1,10 +1,12 @@
 (ns jepsen.redis.db.single
   "Automation for setting up a single Redis node. Uses whatever Debian has
   right now."
-  (:require [clojure.java.io :as io]
+  (:require [clojure [string :as str]]
+            [clojure.java.io :as io]
             [jepsen [control :as c]
                     [db :as db]]
-            [jepsen.control.util :as cu]
+            [jepsen.control [net :as cn]
+                            [util :as cu]]
             [jepsen.os.debian :as debian]
             [clj-commons.slingshot :refer [try+ throw+]]))
 
@@ -24,20 +26,31 @@
   "Where Redis writes files."
   "/var/lib/redis")
 
+(def config-file
+  "Where do we write the config?"
+  "/etc/redis/redis.conf")
+
 (defn install!
   "Installs redis via debian on the local node."
   []
   (c/su
     (debian/install ["redis-server" "redis-tools"])))
 
+(defn config-str
+  "Returns a string for this node's configuration file."
+  [test node]
+  (-> (io/resource "single.conf")
+      slurp
+      (str/replace #"%IP%" (cn/ip node))
+      (str/replace #"%APPEND_ONLY%"
+                   (if (:append-only test true)
+                     "yes"
+                     "no"))))
+
 (defn configure!
   "Uploads config files."
   [test node]
-  (c/su
-      (-> (io/resource "single.conf")
-          slurp
-          (cu/write-file!
-            "/etc/redis/redis.conf"))))
+  (c/su (cu/write-file! (config-str test node) config-file)))
 
 (defrecord DB []
   db/DB
@@ -48,15 +61,18 @@
     (db/kill! this test node)
     (configure! test node)
     (db/start! this test node)
-    (cu/await-tcp-port 6379))
+    (cu/await-tcp-port (cn/ip node) 6379 {}))
 
   (teardown! [this test node]
     (db/kill! this test node)
-    (c/su (c/exec :rm :-rf (c/lit (str data-dir "/*")))))
+    (c/su (c/exec :rm :-rf
+                  (c/lit (str data-dir "/*"))
+                  log-file)))
 
   db/LogFiles
   (log-files [this test node]
-             {log-file "redis.log"})
+             {config-file "redis.conf"
+              log-file    "redis.log"})
 
   db/Kill
   (start! [this test node]
@@ -77,5 +93,5 @@
 
 (defn db
   "Constructs a new single-node DB."
-  []
+  [opts]
   (DB.))
