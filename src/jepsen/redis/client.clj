@@ -50,8 +50,8 @@
 
 (defn close!
   "Closes a connection to a node."
-  [^java.io.Closeable conn]
-  (.close (:pool conn)))
+  [conn]
+  (.close ^java.io.Closeable (:pool conn)))
 
 (defmacro with-exceptions
   "Takes an operation, an idempotent :f set, and a body; evaluates body,

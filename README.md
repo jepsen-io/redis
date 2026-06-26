@@ -7,9 +7,8 @@ implemented using `LRANGE` and `RPUSH`, which uses
 [Elle](https://github.com/jepsen-io/elle) to find transactional anomalies up to
 strict serializability.
 
-This was originally written for redis-raft, which seems to be unmaintained.
-I've rewritten it to run a single Redis instance; later I'd like to add Redis
-Cluster.
+This was originally written for redis-raft, which seems to be unmaintained. It
+now offers two modes: a single node, or a six+ node Redis Cluster.
 
 ## Prerequisites
 
@@ -17,10 +16,10 @@ You'll need a [Jepsen cluster](https://github.com/jepsen-io/jepsen#setting-up-a-
 
 ## Usage
 
-To get started, try
+To demonstrate Redis Cluster losing data, try:
 
 ```
-lein run test -n n1
+lein run test --db-type cluster --nodes n1,n2,n3,n4,n5,n6 --concurrency 2n -r 1000 --nemesis partition,kill --nemesis-interval 5 --time-limit 300 --max-txn-length 1 --test-count 10
 ```
 
 To see all options, try
