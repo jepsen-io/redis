@@ -45,7 +45,8 @@
       (str/replace #"%APPEND_ONLY%"
                    (if (:append-only test true)
                      "yes"
-                     "no"))))
+                     "no"))
+      (str/replace #"%APPEND_FSYNC%" (name (:append-fsync test :everysec)))))
 
 (defn configure!
   "Uploads config files."

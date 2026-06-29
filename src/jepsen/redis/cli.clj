@@ -94,8 +94,13 @@
 
 (def cli-opts
   "Options for test runners."
-  [[nil "--[no]-append-only" "Enables or disables the append-only file."
+  [[nil "--[no-]append-only" "Enables or disables the append-only file."
     :default true]
+
+   [nil "--append-fsync POLICY" "Either no, always, or everysec"
+    :default "everysec"
+    :parse-fn keyword
+    :validate [#{:no :always :everysec}]]
 
    [nil "--cluster-replicas COUNT" "Number of cluster replicas."
     :parse-fn parse-long
