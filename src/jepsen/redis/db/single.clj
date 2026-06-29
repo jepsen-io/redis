@@ -46,7 +46,12 @@
                    (if (:append-only test true)
                      "yes"
                      "no"))
-      (str/replace #"%APPEND_FSYNC%" (name (:append-fsync test :everysec)))))
+      (str/replace #"%APPEND_FSYNC%" (name (:append-fsync test :everysec)))
+      (cond->
+        (and (:username test)
+             (:password test))
+        (str "\n\nrequirepass " (:password test)
+             "\nuser " (:username test) " on +@all ~* >" (:password test)))))
 
 (defn configure!
   "Uploads config files."
@@ -90,7 +95,13 @@
     (cu/kill-bin! :STOP false bin))
 
   (resume! [this test node]
-    (cu/kill-bin! :CONT false bin)))
+    (cu/kill-bin! :CONT false bin))
+
+  db/Primary
+  (setup-primary! [this test node])
+
+  (primaries [this test]
+    (:nodes test)))
 
 (defn db
   "Constructs a new single-node DB."

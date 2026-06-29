@@ -66,6 +66,10 @@
     (info "Creating redis cluster")
     (c/exec :yes "yes" |
             :redis-cli :-h node
+            (when-let [u (:username test)]
+              [:--user u])
+            (when-let [p (:password test)]
+              [:--pass p])
             :--cluster :create
             (mapv (fn [node]
                     (str (ip node) ":" port))
@@ -114,9 +118,11 @@
 
   db/Kill
   (start! [this test node]
+    (info "Starting redis-server")
     (c/su (c/exec :service "redis-server" :start)))
 
   (kill! [this test node]
+    (info "Killing redis-server")
     (cu/kill-bin! :KILL true bin)
     (try+ (c/su (c/exec :service "redis-server" :stop))
           (catch (#{1 5} (:exit %)) e
