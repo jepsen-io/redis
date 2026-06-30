@@ -1,5 +1,6 @@
 (ns jepsen.redis.nemesis.raft
-  "Nemeses for RedisRaft. RedisRaft looks to be unmaintained in 2026, but I'm setting this aside in case we want to take another shot at it later."
+  "Nemeses for RedisRaft. RedisRaft looks to be unmaintained in 2026, but I'm
+  setting this aside in case we want to take another shot at it later."
   (:require [clojure.pprint :refer [pprint]]
             [clojure.tools.logging :refer [info warn]]
             [jepsen [db :as db]
@@ -9,7 +10,7 @@
                     [util :as util]]
             [jepsen.nemesis [time :as nt]
                             [combined :as nc]]
-            [jepsen.redis [db :as rdb]]))
+            [jepsen.redis.db.raft :as rdb]))
 
 (defn member-nemesis
   "A nemesis for adding and removing nodes from the cluster. Options:
