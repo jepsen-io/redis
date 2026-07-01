@@ -67,7 +67,7 @@
     (db/kill! this test node)
     (configure! test node)
     (db/start! this test node)
-    (cu/await-tcp-port (cn/ip node) 6379 {}))
+    (rc/await-ready node))
 
   (teardown! [this test node]
     (db/kill! this test node)
