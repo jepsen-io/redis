@@ -126,7 +126,7 @@
 (defn await-ready
   "Blocks until the given node is ready to accept operations."
   [node]
-  (await-fn check-ready
+  (await-fn (partial check-ready node)
             {:log-message "Waiting for Redis to accept writes"
              :log-interval 10
              :timeout 120}))
