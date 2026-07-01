@@ -1,6 +1,7 @@
 (ns jepsen.redis.client
   "Helper functions for working with Carmine, our redis client."
   (:require [clojure.tools.logging :refer [info warn]]
+            [jepsen.util :refer [await-fn]]
             [slingshot.slingshot :refer [try+ throw+]]
             [taoensso.carmine :as car :refer [wcar]]
             [taoensso.carmine [connections :as conn]]))
@@ -109,6 +110,28 @@
        (catch Exception e#
          (Thread/sleep (* ~n 1000))
          (throw e#))))
+
+(defn check-ready
+  "Is the given node able to accept operations? Throws if not."
+  [node]
+  (let [conn (open node)]
+    (try
+      (wcar conn
+            (car/set "__JEPSEN_READY__" "Yes ma'am!")
+            (car/del "__JEPSEN_READY__"))
+      true
+      (finally
+        (close! conn)))))
+
+(defn await-ready
+  "Blocks until the given node is ready to accept operations."
+  [node]
+  (await-fn check-ready
+            {:log-message "Waiting for Redis to accept writes"
+             :log-interval 10
+             :timeout 120}))
+
+;; Transactions
 
 (defn abort-txn!
   "Takes a connection and, if in a transaction, calls discard on it, resetting

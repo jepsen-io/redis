@@ -98,10 +98,11 @@
     (db/kill! this test node)
     (configure! test node)
     (db/start! this test node)
+    (cu/await-tcp-port (ip node) 6379 {})
     (jepsen/synchronize test)
     (when (= (jepsen/primary test) node)
       (cluster! test node))
-    (cu/await-tcp-port (ip node) 6379 {}))
+    (rc/await-ready node))
 
   (teardown! [this test node]
     (db/kill! this test node)
