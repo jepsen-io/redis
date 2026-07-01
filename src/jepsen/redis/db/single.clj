@@ -8,6 +8,7 @@
             [jepsen.control [net :as cn]
                             [util :as cu]]
             [jepsen.os.debian :as debian]
+            [jepsen.redis.client :as rc]
             [clj-commons.slingshot :refer [try+ throw+]]))
 
 (def port
