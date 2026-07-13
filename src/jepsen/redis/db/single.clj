@@ -86,8 +86,7 @@
     (c/su (c/exec :service "redis-server" :start)))
 
   (kill! [this test node]
-    (cu/kill-bin! :KILL true bin)
-    (try+ (c/su (c/exec :service "redis-server" :stop))
+    (try+ (c/su (c/exec :systemctl :kill "redis-server" :--signal "SIGKILL"))
           (catch (#{1 5} (:exit %)) e
             :service-does-not-exist)))
 
